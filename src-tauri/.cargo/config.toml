@@ -1,3 +1,5 @@
 # Cargo configuration for cracktivity (src-tauri).
-# Manifest embedding for test binaries is done in build.rs via
-# rustc-link-arg-tests so the flags apply only to this package.
+# The comctl32 v6 manifest is embedded by the LINKER into every linked
+# product (bins + test harnesses) — see build.rs and D-020. Plain
+# rustc-link-arg-tests would not reach the lib unit-test harness, and
+# [target] rustflags here would leak into dependency build scripts.

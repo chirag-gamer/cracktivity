@@ -59,7 +59,7 @@ cracktivity/
 
 ## 3. Data model (SQLCipher / SQLite, WAL)
 
-All tables have `created_at`/`updated_at`. FKs enforced. Migrations via a versioned `schema_migrations` table (user_version pragma).
+All tables have `created_at`/`updated_at`. FKs enforced. Migrations versioned by the `user_version` pragma (the implemented mechanism — no separate table).
 
 ```sql
 accounts(id PK, provider TEXT CHECK(provider IN('gmail','outlook','icloud','zoho','yahoo','imap')),
@@ -113,7 +113,7 @@ Per account, per folder, one tokio task. Transport behind the `MailTransport` tr
 
 1. **Connect & auth** (XOAUTH2 or LOGIN with app password), TLS via rustls.
 2. **Folder discovery:** `LIST` with SPECIAL-USE; map roles; detect UIDVALIDITY changes → on change: drop UID-keyed rows for that folder, re-baseline (FR-8 no-data-loss rule: messages are re-fetched, not lost).
-3. **Initial backfill:** fetch newest N (backfill_days) in batches of 500: `UID FETCH <range> (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST X-GM-THRID)])`. Always `.PEEK` (never set `\Seen` implicitly). Write in transactions of 500; UI shows progress; kill-safe (resumable via highest_uid).
+3. **Initial backfill:** fetch newest N (backfill_days) in batches of 500: `UID FETCH <range> (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)])`. Always `.PEEK` (never set `\Seen` implicitly). `X-GM-THRID` is not a header — it is a Gmail FETCH item that generic HEADER.FIELDS cannot retrieve; fetch it extension-side when the server models it (D-019), else JWZ covers Gmail correctly. Write in transactions of 500; UI shows progress; kill-safe (resumable via highest_uid).
 4. **Steady state:** if IDLE: idle with 25-min self-renew; on untagged EXISTS → fetch new range (same header-only fetch); on FLAGS/FETCH events → update rows. If no IDLE (Outlook fallback): poll every 90 s. **Expunge/flag reconciliation without QRESYNC:** every 5 min (and after each IDLE burst), `UID SEARCH ALL` diff vs. local highest set + `FETCH (UID FLAGS)` snapshot diff. With QRESYNC: `SELECT ... (QRESYNC (last_uidvalidity highestmodseq))` and apply vanished/changed sets.
 5. **Body fetch:** on open + prefetch of text parts for the 10 newest unread in the active view. Attachment blobs only on explicit save (FR-10).
 6. **Send path:** SMTP submission (STARTTLS 587 or implicit TLS 465 per provider matrix); on success, IMAP APPEND to the Sent folder with `\Seen` + date (FR-18); Outbox rows are retried with backoff; failure reasons surfaced (FR-5).

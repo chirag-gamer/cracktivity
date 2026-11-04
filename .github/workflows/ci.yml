@@ -41,7 +41,9 @@ jobs:
         run: cargo fmt --check
         working-directory: src-tauri
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        # --all-targets pins the same gate the local verify runs (test
+        # harnesses included — they carry the comctl32 manifest requirement).
+        run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
       # L2 + Phase-1 smoke tests (SQLCipher/FTS5, Credential Manager) run here;
       # the Credential Manager is available on windows-latest runners.

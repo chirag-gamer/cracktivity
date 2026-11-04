@@ -80,15 +80,23 @@ impl Loopback {
         Ok(Self { listener, port })
     }
 
-    /// The redirect_uri for this attempt.
+    /// The redirect_uri for this attempt: `http://127.0.0.1:<port>` with the
+    /// port in the PORT component (D-017). Entra matches loopback reply URLs
+    /// ignoring only the port, so the path must be empty.
     pub fn redirect_uri(&self) -> String {
-        format!("http://127.0.0.1/{}", self.port)
+        format!("http://127.0.0.1:{}/", self.port)
     }
 
-    /// Blocks up to `timeout` waiting for the browser's redirect GET and
-    /// extracts the `code` (or `error`) query parameter. Answers the browser
-    /// with a minimal completion page either way.
-    pub fn wait_for_code(&self, timeout: Duration) -> Result<String, OAuthError> {
+    /// Blocks up to `timeout` for the browser's redirect GET and extracts the
+    /// `code` parameter, requiring `state` to equal `expected_state` (RFC
+    /// 8252: state binds the redirect to this attempt; PKCE binds the code to
+    /// this client). Answers the browser with a minimal completion page
+    /// either way.
+    pub fn wait_for_code(
+        &self,
+        timeout: Duration,
+        expected_state: &str,
+    ) -> Result<String, OAuthError> {
         // Non-blocking accept polled against the deadline: TcpListener has
         // no accept timeout, and a 50 ms poll costs nothing.
         self.listener.set_nonblocking(true)?;
@@ -124,6 +132,12 @@ impl Loopback {
 
         let result = extract_query_param(&raw, "code")
             .filter(|c| !c.is_empty())
+            .filter(|_| {
+                // State mismatch (or absence) means this redirect does not
+                // belong to the attempt that generated the authorize URL.
+                extract_query_param(&raw, "state")
+                    .is_some_and(|s| constant_time_eq(&s, expected_state))
+            })
             .ok_or(OAuthError::FlowCancelled);
         let page = match &result {
             Ok(_) => "<html><body><p>cracktivity is signed in. You can close this tab.</p></body></html>",
@@ -196,12 +210,33 @@ pub fn pkce_challenge(verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
+/// One-time `state` token binding the browser redirect to this attempt
+/// (RFC 8252 §4.4.1): 128 bits, base64url, 22 characters.
+pub fn state_token() -> Result<String, OAuthError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// Byte-wise equality in constant time for short tokens.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 /// The authorize URL to open in the system browser.
-pub fn authorize_url(redirect_uri: &str, code_challenge: &str) -> Result<String, OAuthError> {
+pub fn authorize_url(
+    redirect_uri: &str,
+    code_challenge: &str,
+    state: &str,
+) -> Result<String, OAuthError> {
     if OUTLOOK_CLIENT_ID.is_empty() {
         return Err(OAuthError::ClientIdMissing);
     }
-    build_authorize_url(OUTLOOK_CLIENT_ID, redirect_uri, code_challenge)
+    build_authorize_url(OUTLOOK_CLIENT_ID, redirect_uri, code_challenge, state)
 }
 
 /// Pure URL construction, split from the client-id guard so tests can pin
@@ -210,6 +245,7 @@ fn build_authorize_url(
     client_id: &str,
     redirect_uri: &str,
     code_challenge: &str,
+    state: &str,
 ) -> Result<String, OAuthError> {
     let mut url = Url::parse(AUTHORIZE_URL).expect("authorize endpoint is a valid URL");
     url.query_pairs_mut()
@@ -218,6 +254,7 @@ fn build_authorize_url(
         .append_pair("redirect_uri", redirect_uri)
         .append_pair("response_mode", "query")
         .append_pair("scope", SCOPES)
+        .append_pair("state", state)
         .append_pair("code_challenge", code_challenge)
         .append_pair("code_challenge_method", "S256");
     Ok(url.into())
@@ -333,14 +370,20 @@ mod tests {
 
     #[test]
     fn authorize_url_carries_verified_parameters() {
-        let url = build_authorize_url("test-client-id", "http://127.0.0.1/52341", "test-challenge")
-            .unwrap();
+        let url = build_authorize_url(
+            "test-client-id",
+            "http://127.0.0.1/52341",
+            "test-challenge",
+            "st8",
+        )
+        .unwrap();
         let parsed = Url::parse(&url).unwrap();
         assert_eq!(parsed.domain(), Some("login.microsoftonline.com"));
         assert!(parsed.path().contains("/consumers/oauth2/v2.0/authorize"));
         let query: BTreeMap<_, _> = parsed.query_pairs().collect();
         assert_eq!(query.get("response_type").unwrap(), "code");
         assert_eq!(query.get("redirect_uri").unwrap(), "http://127.0.0.1/52341");
+        assert_eq!(query.get("state").unwrap(), "st8");
         assert_eq!(query.get("code_challenge_method").unwrap(), "S256");
         // Scope must use outlook.office.com, not the office365.com variant
         // (documented common failure).
@@ -361,33 +404,80 @@ mod tests {
     }
 
     /// The loopback listener answers one redirect with a completion page and
-    /// the code; a request without a code is a cancellation.
+    /// the code, but only when `state` matches (F2 of the review: the state
+    /// binds the redirect to this attempt).
     #[test]
     fn loopback_serves_redirect_and_extracts_code() {
         let loopback = Loopback::bind().unwrap();
         let port = loopback.port;
-        assert!(loopback.redirect_uri().ends_with(&port.to_string()));
+        // D-017 requires the port in the PORT component, path empty.
+        let uri = loopback.redirect_uri();
+        let parsed = Url::parse(&uri).unwrap();
+        assert_eq!(parsed.host_str(), Some("127.0.0.1"));
+        assert_eq!(parsed.port(), Some(port));
+        assert_eq!(parsed.path(), "/", "loopback path must be empty");
 
         let handle = std::thread::spawn(move || {
             let mut conn = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
             let _ = conn.write_all(
-                b"GET /?code=the%2Bcode HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                b"GET /?code=the%2Bcode&state=st8 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
             );
             let mut resp = String::new();
             let _ = conn.read_to_string(&mut resp);
             resp
         });
-        let code = loopback.wait_for_code(Duration::from_secs(5)).unwrap();
+        let code = loopback
+            .wait_for_code(Duration::from_secs(5), "st8")
+            .unwrap();
         assert_eq!(code, "the+code", "redirect query arrives percent-decoded");
         let page = handle.join().unwrap();
         assert!(page.contains("signed in"));
+    }
+
+    /// A redirect carrying a different (or absent) `state` is a cancellation,
+    /// never an accepted code.
+    #[test]
+    fn loopback_rejects_wrong_state() {
+        let loopback = Loopback::bind().unwrap();
+        let port = loopback.port;
+        let handle = std::thread::spawn(move || {
+            let mut conn = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let _ = conn.write_all(
+                b"GET /?code=evil&state=stolen HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+            );
+            let mut resp = String::new();
+            let _ = conn.read_to_string(&mut resp);
+            resp
+        });
+        let err = loopback
+            .wait_for_code(Duration::from_secs(5), "expected")
+            .expect_err("state mismatch must not yield a code");
+        assert!(matches!(err, OAuthError::FlowCancelled));
+        let page = handle.join().unwrap();
+        assert!(page.contains("failed"));
+    }
+
+    #[test]
+    fn state_token_is_url_safe_and_unique() {
+        let a = state_token().unwrap();
+        let b = state_token().unwrap();
+        assert_eq!(a.len(), 22, "16 bytes → 22 base64url chars");
+        assert_ne!(a, b);
+        assert!(!a.contains('+') && !a.contains('/') && !a.contains('='));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_only_equal() {
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(!constant_time_eq("abc", "abd"));
+        assert!(!constant_time_eq("abc", "abcd"));
     }
 
     #[test]
     fn loopback_times_out_without_a_browser() {
         let loopback = Loopback::bind().unwrap();
         let err = loopback
-            .wait_for_code(Duration::from_millis(200))
+            .wait_for_code(Duration::from_millis(200), "any")
             .expect_err("no request should time out");
         assert!(matches!(err, OAuthError::FlowCancelled));
     }
