@@ -1,0 +1,3 @@
+# Cargo configuration for cracktivity (src-tauri).
+# Manifest embedding for test binaries is done in build.rs via
+# rustc-link-arg-tests so the flags apply only to this package.
