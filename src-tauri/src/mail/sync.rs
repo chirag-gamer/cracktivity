@@ -67,6 +67,9 @@ fn meta_to_new_message(m: &FetchedMeta) -> NewMessage {
         list_unsubscribe: h.get("list-unsubscribe").cloned(),
         list_unsub_post: h.get("list-unsubscribe-post").cloned(),
         thrid: m.thrid.clone(),
+        // Verdict filled in by store_batch (classification needs DB context).
+        importance: None,
+        importance_reasons: Vec::new(),
     }
 }
 
@@ -147,7 +150,9 @@ pub fn sync_folder(
     Ok(outcome)
 }
 
-/// Inserts fetched metas + contact bookkeeping; returns rows touched.
+/// Inserts fetched metas + classification + contact bookkeeping; returns
+/// rows touched. Classification context loads once per batch (D-013: rules
+/// only, instant, offline).
 fn store_batch(
     conn: &rusqlite::Connection,
     account_id: i64,
@@ -157,7 +162,24 @@ fn store_batch(
     if metas.is_empty() {
         return Ok(0);
     }
-    let batch: Vec<NewMessage> = metas.iter().map(meta_to_new_message).collect();
+    let ctx = crate::classify::ClassifyContext {
+        my_addresses: dao::account_addresses(conn, account_id)?,
+        sender_overrides: dao::classification_overrides(conn, account_id)?
+            .into_iter()
+            .filter_map(|(k, v)| crate::classify::Importance::parse(&v).map(|i| (k, i)))
+            .collect(),
+        two_way_senders: dao::two_way_senders(conn)?,
+    };
+    let batch: Vec<NewMessage> = metas
+        .iter()
+        .map(|m| {
+            let mut nm = meta_to_new_message(m);
+            let verdict = crate::classify::classify(&nm, &ctx);
+            nm.importance = Some(verdict.importance.as_str().to_string());
+            nm.importance_reasons = verdict.reasons.into_iter().map(|r| r.to_string()).collect();
+            nm
+        })
+        .collect();
     let froms: Vec<_> = batch
         .iter()
         .filter_map(|m| m.from.clone())

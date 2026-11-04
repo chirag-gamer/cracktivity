@@ -37,14 +37,14 @@ Consolidates the document inventory and the phased task list. Updated continuous
 5. JWZ threading; contacts/sender_stats bookkeeping; settings store. **done**
 6. Verify: **V-2.1** L3 suite green — 48 lib + 1 integration tests, 0 failures (delta/flag/expunge/reconnect/UIDVALIDITY cases covered); **V-2.2** ⚠ deferred: no Docker on the dev machine — Dovecot container + gated L4 `#[ignore]` tests + nightly workflow are Phase-3 entry work; **V-2.3** `kill_mid_backfill_resumes_without_duplicates` green (11-test sync suite); **V-2.4** code paths ready (loopback redirect + state binding fixed per D-023); manual connect matrix needs the user's real accounts (and the Entra registration for Outlook); **V-2.5** `secrets_never_reach_disk` green (FR-2).
 
-### Phase 3 — MVP features & core user flow — ☐
-1. Three-pane main window (list virtualized, reader with sandboxed rendering §8 v1: sanitize+block-all-remote, no tracker list yet).
-2. Unified inbox + per-account views; compose/reply/forward/drafts; Outbox + SMTP send + Sent APPEND (FR-16..18).
-3. Offline path: read/search (FTS5) queue-send (FR-8, FR-9 v1 local-only).
-4. Notch panel v1: window recipe (D-011), tray toggle + hotkey + hide-on-blur/Esc; triage list with archive/reply quick actions (FR-28 partial).
-5. Keyboard navigation + command palette + shortcut overlay (FR-30); tray + badge (FR-31).
-6. First-run AI opt-in dialog + model manager download/resume/verify (FR-20) — download only, no inference yet.
-7. Verify: **V-3.1** L5 e2e: onboarding dialog → add mocked account → list → open thread → reply → send (mock SMTP) → offline toggle scenarios; **V-3.2** panel Alt-Tab/taskbar exclusion + hotkey toggle (FlaUI, manual evidence); **V-3.3** transparent-panel perf measurement on low-end hardware (D-011 gate — record decision outcome); **V-3.4** FTS search < 1 s @ seeded 100k benchmark; **V-3.5** real Gmail + Outlook manual send/receive round-trip.
+### Phase 3 — MVP features & core user flow — ◐ (core pillars done 2026-11-04; D-025 scope split)
+1. Three-pane main window (list virtualized, reader with sandboxed rendering §8 v1: sanitize+block-all-remote, no tracker list yet). **done** — Fluent v9 shell + @tanstack/react-virtual list (10k-row windowing L1-tested) + sandboxed-iframe reader w/ CSP-meta srcdoc; render pipeline = single ammonia pass (D-026): scripts/iframes/handlers stripped, all remote images blocked+counted, utm_*/click-ids stripped (4 render tests).
+2. Unified inbox + per-account views; compose/reply/forward/drafts; Outbox + SMTP send + Sent APPEND (FR-16..18). **partial** — unified + per-account views done (L1+L2+L3); Important/Other triage pulled forward per D-025 (rules engine + corrections teaching, 7 unit + 1 sync-integration tests); **compose/SMTP/Sent APPEND remain open** (next session; `note_sent` still unused).
+3. Offline path: read/search (FTS5) queue-send (FR-8, FR-9 v1 local-only). **done for read/search** — all UI queries answered from the encrypted cache offline (FTS5 w/ quoted prefix queries, user input never parsed as FTS syntax); queue-send lands with compose (offline flag edits are honestly rejected, not queued — D-026).
+4. Notch panel v1: window recipe (D-011), tray toggle + hotkey + hide-on-blur/Esc; triage list with archive/reply quick actions (FR-28 partial). **done** — full D-011 recipe (no_redirection_bitmap, WS_EX_TOOLWINDOW re-assert on show, CSS-only slide, 150 ms blur-debounce hide), tray (menu + left-click toggle, tooltip badge deferred), Ctrl+Shift+Space hotkey, panel triage list w/ e/u/Enter/Esc; panel hides fully (no resting strip — D-026).
+5. Keyboard navigation + command palette + shortcut overlay (FR-30); tray + badge (FR-31). **done** — j/k/Enter/e/u/s///?/Ctrl+K/Ctrl+1..9 over window-capture keydown (typing-guard); palette + cheat sheet; tray badge overlay deferred (tooltip carries count; Windows tray overlays need icon generation — Phase 4/5 polish).
+6. First-run AI opt-in dialog + model manager download/resume/verify (FR-20) — download only, no inference yet. **open** (deferred with compose per D-025).
+7. Verify: **V-3.1** L5 e2e **seeded legs GREEN 4/4** (2026-11-05 local Win11: hydration from encrypted cache → j/keyboard open reader → Ctrl+1 account switch → `/`+FTS5 search; WDIO + @wdio/tauri-service 1.5.1, v9-pinned, external tauri-driver 2.1.0, `--e2e-seed` idempotent); onboarding-dialog/add-account-UI and send/reply legs deferred with compose (D-025); **V-3.2** FlaUI Alt-Tab/hotkey — manual gate, recipe implemented; **V-3.3** low-end transparent-panel perf — open (D-011 gate); **V-3.4** FTS < 1 s @ 100k — open (benchmark harness TODO; L1/L3 cover correctness); **V-3.5** real Gmail/Outlook round-trip — open (needs user accounts; Outlook also blocked on the Entra registration, V-2.4).
 
 ### Phase 4 — Remaining approved features — ☐
 1. Importance/Other: rule engine + counters + correction learning; split views (FR-11..12).
@@ -83,15 +83,15 @@ Consolidates the document inventory and the phased task list. Updated continuous
 | FR-5 Connection state | §11 | 2.3 | V-2.1 |
 | FR-6 Backfill | §4 | 2.3 | V-2.1, V-3.5 |
 | FR-7 Incremental sync | §4 | 2.3 | V-2.1, V-2.2 |
-| FR-8 Offline | §3,§4,§11 | 3.3 | V-3.1, V-2.3 |
-| FR-9 Search | §3,§4 | 3.3, 4.7 | V-3.4 |
+| FR-8 Offline | §3,§4,§11 | 3.3 | V-3.1, V-2.3 — **read/search offline verified** (L1/L2, all queries cache-only); queue-send lands with compose |
+| FR-9 Search | §3,§4 | 3.3, 4.7 | V-3.4 (open); **local FTS5 done** (quoted-prefix queries, L1+L2+L3) |
 | FR-10 Attachments | §4.5 | 3.2 | V-3.1 |
-| FR-11 Important/Other | §4,D-013 | 4.1 | V-4.1 |
-| FR-12 On-device classify | D-013 | 4.1 | V-4.1 |
+| FR-11 Important/Other | §4,D-013 | 3.2 (pulled fwd, D-025), 4.1 | V-4.1 (batch ≥90%); **rules + corrections live** (7 unit + sync-integration tests; AC cases 1–3 covered) |
+| FR-12 On-device classify | D-013 | 3.2 (pulled fwd), 4.1 | V-4.1 (zero-egress audit open); rules-only, no network path exists in classify |
 | FR-13 Follow-ups | §3 | 4.2 | V-4.2 |
 | FR-14 Subscription cleanup | §4 | 4.3 | V-4.3 |
 | FR-15 Tracking badges | §8 | 4.4 | V-4.4 |
-| FR-16 Threads | §4 | 3.1 | V-3.1 |
+| FR-16 Threads | §4 | 3.1 | V-3.1 — **threaded list/reader done** (JWZ from Phase 2; list+reader L1/L2 tested) |
 | FR-17 Compose/drafts | §4 | 3.2 | V-3.1 |
 | FR-18 SMTP send | §4.6 | 3.2 | V-3.5 |
 | FR-19 Remote content | §8 | 4.4 | V-4.4 |
@@ -103,10 +103,10 @@ Consolidates the document inventory and the phased task list. Updated continuous
 | FR-25 AI switch | §6.6 | 4.5 | V-4.5 |
 | FR-26 MCP server | §9 | 4.6 | V-4.6, V-4.7 |
 | FR-27 MCP safety | §9,§10 | 4.6 | V-4.6 |
-| FR-28 Notch panel | §7 | 3.4 | V-3.2, V-3.3 |
-| FR-29 Main window | §2,G | 3.1 | V-3.1 |
-| FR-30 Keyboard | G | 3.5 | V-3.1, V-5.1 |
-| FR-31 Tray | G | 3.5 | V-3.1 |
+| FR-28 Notch panel | §7 | 3.4 | V-3.2 (FlaUI manual gate — recipe implemented), V-3.3 (open); **panel v1 done** (D-011 recipe + triage UI, L1-tested) |
+| FR-29 Main window | §2,G | 3.1 | V-3.1 — **three-pane shell done** (virtualized list, sandboxed reader, light/dark follows system) |
+| FR-30 Keyboard | G | 3.5 | V-3.1 (seeded legs), V-5.1 — **full keymap live** (j/k/Enter/e/u/s///?/Ctrl+K/Ctrl+1..9, L1 6-test contract) |
+| FR-31 Tray | G | 3.5 | V-3.1 — **tray done** (menu: Open/Check/Quit; left-click toggles panel); badge overlay deferred (tooltip carries count) |
 | FR-32 Allowlist/no-telemetry | §10,D-015 | 5.4 | V-5.2 |
 | FR-33 Encrypted cache | §5,§10 | 2.1 | V-2.5, Phase-6 task-4 failure drills |
 | FR-34 Updates | §10,D-016 | 6.2 | V-6.2 |

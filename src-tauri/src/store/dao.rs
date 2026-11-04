@@ -39,6 +39,9 @@ pub struct NewMessage {
     pub list_unsubscribe: Option<String>,
     pub list_unsub_post: Option<String>,
     pub thrid: Option<String>,
+    /// Classification verdict (D-013); `None` leaves the row unclassified.
+    pub importance: Option<String>,
+    pub importance_reasons: Vec<String>,
 }
 
 impl NewMessage {
@@ -242,25 +245,40 @@ pub fn apply_threads(
 
 // ---------------------------------------------------------------- accounts
 
-pub fn add_account(
-    conn: &Connection,
-    provider: &str,
-    email: &str,
-    display_name: Option<&str>,
-    auth_type: &str,
-    credential_ref: &str,
-) -> Result<i64, StoreError> {
+/// Fields for a new accounts row (spec §3).
+pub struct NewAccount<'a> {
+    pub provider: &'a str,
+    pub email: &'a str,
+    pub display_name: Option<&'a str>,
+    pub auth_type: &'a str,
+    pub credential_ref: &'a str,
+    pub imap_host: Option<&'a str>,
+    pub imap_port: Option<u16>,
+}
+
+pub fn add_account(conn: &Connection, acc: &NewAccount<'_>) -> Result<i64, StoreError> {
+    let NewAccount {
+        provider,
+        email,
+        display_name,
+        auth_type,
+        credential_ref,
+        imap_host,
+        imap_port,
+    } = acc;
     let now = now_ms();
     conn.execute(
         "INSERT INTO accounts(provider, email, display_name, auth_type, credential_ref,
-                              created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                              imap_host, imap_port, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
         params![
             provider,
             email,
             display_name,
             auth_type,
             credential_ref,
+            imap_host,
+            imap_port,
             now
         ],
     )?;
@@ -364,8 +382,8 @@ pub fn insert_messages(
             "INSERT INTO messages(account_id, folder_id, uid, message_id, in_reply_to,
                   references_raw, subject, from_json, to_json, cc_json, date_sent, date_recv,
                   size, flags, list_unsubscribe, list_unsub_post, thrid, unread,
-                  created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19)
+                  importance, importance_reasons_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21)
              ON CONFLICT(account_id, folder_id, uid) DO UPDATE SET
                message_id = excluded.message_id,
                in_reply_to = excluded.in_reply_to,
@@ -382,6 +400,8 @@ pub fn insert_messages(
                list_unsub_post = excluded.list_unsub_post,
                thrid = excluded.thrid,
                unread = excluded.unread,
+               importance = COALESCE(excluded.importance, messages.importance),
+               importance_reasons_json = COALESCE(excluded.importance_reasons_json, messages.importance_reasons_json),
                updated_at = excluded.updated_at",
         )?;
         for m in batch {
@@ -396,6 +416,8 @@ pub fn insert_messages(
                 m.cc.as_ref()
                     .map(|a| serde_json::to_string(a).unwrap_or_default());
             let flags = serde_json::to_string(&m.flags).unwrap_or_else(|_| "[]".into());
+            let reasons =
+                serde_json::to_string(&m.importance_reasons).unwrap_or_else(|_| "[]".into());
             let n = stmt.execute(params![
                 account_id,
                 folder_id,
@@ -415,6 +437,8 @@ pub fn insert_messages(
                 m.list_unsub_post,
                 m.thrid,
                 m.unread() as i64,
+                m.importance,
+                reasons,
                 now,
             ])?;
             // execute returns 1 for insert, 1 for the update branch too; count
@@ -594,6 +618,64 @@ pub fn note_sent(conn: &Connection, to: &[Addr]) -> Result<(), StoreError> {
 }
 
 // ---------------------------------------------------------------- settings
+
+/// Per-sender classification corrections (D-013): JSON map
+/// sender → 'important'|'other' in `sender_stats.classification_overrides`.
+pub fn classification_overrides(
+    conn: &Connection,
+    account_id: i64,
+) -> Result<std::collections::HashMap<String, String>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT sender_email, classification_overrides FROM sender_stats
+         WHERE account_id = ?1 AND classification_overrides IN ('important','other')",
+    )?;
+    let rows = stmt
+        .query_map(params![account_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+    Ok(rows)
+}
+
+pub fn set_classification_override(
+    conn: &Connection,
+    account_id: i64,
+    sender_email: &str,
+    importance: &str,
+) -> Result<(), StoreError> {
+    let now = now_ms();
+    conn.execute(
+        "INSERT INTO sender_stats(account_id, sender_email, classification_overrides,
+                                  created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(account_id, sender_email) DO UPDATE SET
+           classification_overrides = excluded.classification_overrides,
+           updated_at = excluded.updated_at",
+        params![account_id, sender_email, importance, now],
+    )?;
+    Ok(())
+}
+
+/// The account's own address(es), lowercased — `ClassifyContext::my_addresses`.
+pub fn account_addresses(conn: &Connection, account_id: i64) -> Result<Vec<String>, StoreError> {
+    let email: Option<String> = conn
+        .query_row(
+            "SELECT email FROM accounts WHERE id = ?1",
+            params![account_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(email.into_iter().map(|e| e.to_lowercase()).collect())
+}
+
+/// Senders the user has actually written to (`contacts.sent_to > 0`).
+pub fn two_way_senders(conn: &Connection) -> Result<Vec<String>, StoreError> {
+    let mut stmt = conn.prepare_cached("SELECT email FROM contacts WHERE sent_to > 0")?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
 
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<serde_json::Value>, StoreError> {
     let raw: Option<String> = conn

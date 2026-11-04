@@ -33,7 +33,12 @@ export function SystemThemeProvider({ children }: { children: React.ReactNode })
   const mode = useSystemThemeMode();
   return (
     <ModeContext.Provider value={mode}>
-      <FluentProvider theme={themeFor(mode)}>{children}</FluentProvider>
+      {/* FluentProvider renders a div that does not self-fill; without the
+          explicit height the three-pane grid collapses to zero (verified in
+          the first e2e run: elements existed but were never displayed). */}
+      <FluentProvider theme={themeFor(mode)} style={{ height: "100%" }}>
+        {children}
+      </FluentProvider>
     </ModeContext.Provider>
   );
 }

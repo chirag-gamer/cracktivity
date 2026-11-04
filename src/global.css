@@ -1,0 +1,408 @@
+/* cracktivity global styles: three-pane shell + notch panel (FR-28/FR-29).
+   Fluent UI v9 tokens paint the chrome; this sheet only handles layout,
+   the panel's CSS-only slide animation (D-011), and list rows. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+/* ---------------------------------------------------------------- shell */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 220px minmax(320px, 480px) 1fr;
+  height: 100%;
+  min-width: 720px;
+}
+
+.pane-accounts {
+  overflow-y: auto;
+  padding: 8px 4px;
+  border-right: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.pane-middle {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.pane-reader {
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: rgba(128, 128, 128, 0.9);
+}
+
+/* --------------------------------------------------------------- toolbar */
+
+.toolbar {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.tab {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: rgba(128, 128, 128, 0.18);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ rows */
+
+.pane-list {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+  text-align: left;
+  width: 100%;
+  background: transparent;
+  border-left: 3px solid transparent;
+  font: inherit;
+  color: inherit;
+}
+
+.row:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.row.selected {
+  background: rgba(0, 120, 212, 0.12);
+  border-left-color: #0078d4;
+}
+
+.row.unread .row-sender,
+.row.unread .row-subject {
+  font-weight: 700;
+}
+
+.row-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row-sender {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-time {
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 12px;
+}
+
+.row-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row-snippet {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(128, 128, 128, 0.9);
+  font-size: 12px;
+}
+
+/* ----------------------------------------------------------------- nav */
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.nav-item:hover {
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.nav-item.active {
+  background: rgba(0, 120, 212, 0.14);
+  font-weight: 600;
+}
+
+.nav-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #0078d4;
+  flex: none;
+}
+
+.nav-dot.all {
+  background: linear-gradient(135deg, #0078d4, #8a2be2);
+}
+
+.nav-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-slot {
+  color: rgba(128, 128, 128, 0.8);
+}
+
+.nav-count {
+  background: #0078d4;
+  color: #fff;
+  border-radius: 9px;
+  padding: 0 6px;
+  font-size: 11px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.nav-state {
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- reader */
+
+.msg-card {
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.msg-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.msg-to {
+  color: rgba(128, 128, 128, 0.9);
+}
+
+.msg-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.msg-subject {
+  font-weight: 600;
+  margin: 4px 0 8px;
+}
+
+.mail-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font: inherit;
+}
+
+.mail-frame {
+  width: 100%;
+  min-height: 220px;
+  border: none;
+  background: transparent;
+}
+
+/* --------------------------------------------------------------- overlays */
+
+.shortcut-table .key {
+  font-family: Consolas, monospace;
+  font-weight: 600;
+  padding-right: 18px;
+}
+
+.palette-surface {
+  max-width: 460px;
+}
+
+.palette-list {
+  margin-top: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.add-account-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.error-text {
+  color: #d13438;
+}
+
+/* -------------------------------------------------------------- controls */
+
+.link-button {
+  border: none;
+  background: transparent;
+  color: #0078d4;
+  cursor: pointer;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.primary-button {
+  background: #0078d4;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ----------------------------------------------------------- notch panel */
+
+/* The panel window is transparent; this sheet paints the drop-down card.
+   Visibility is toggled from Rust (show/hide of the HWND) and the slide
+   animation runs here on the `collapsed` class — never on the Win32 window
+   (D-011). */
+
+body.panel-host,
+body:has(.panel-shell) {
+  background: transparent;
+}
+
+.panel-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(32, 32, 32, 0.96);
+  color: #f3f3f3;
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  will-change: transform;
+  transition: transform 200ms ease-out;
+  transform: translateY(0);
+}
+
+body.collapsed .panel-shell {
+  transform: translateY(-100%);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.panel-empty {
+  flex: 1;
+}
+
+.panel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  border-left: 3px solid transparent;
+}
+
+.panel-row.selected {
+  background: rgba(0, 120, 212, 0.25);
+  border-left-color: #4ba3e3;
+}
+
+.panel-row .row-snippet,
+.panel-row .row-time {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.panel-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Scrollbars: thin, unobtrusive, both themes. */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.4);
+  border-radius: 5px;
+}

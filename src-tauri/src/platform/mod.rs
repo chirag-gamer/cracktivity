@@ -1,6 +1,7 @@
 //! Windows platform integration (spec §1/§2): keyring (Credential Manager),
-//! DPAPI, tray, hotkeys. Tray/hotkeys land in Phase 3.
+//! DPAPI, tray, hotkeys, and the notch-panel window recipe (D-011).
 pub mod dpapi;
 pub mod keyring;
 pub mod oauth;
 pub mod providers;
+pub mod shell;

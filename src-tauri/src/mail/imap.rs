@@ -19,6 +19,7 @@ use io_imap::rfc3501::fetch::ImapMessageFetchOptions;
 use io_imap::rfc3501::search::ImapMessageSearchOptions;
 use io_imap::rfc3501::select::ImapMailboxSelectOptions;
 use io_imap::rfc3501::store::ImapMessageStoreOptions;
+use io_imap::rfc6851::r#move::ImapMessageMoveOptions;
 use io_imap::types::{
     core::{AString, Atom, Vec1},
     fetch::{MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName, Section},
@@ -330,6 +331,23 @@ impl MailTransport for ImapTransport {
 
     fn uid_store_remove(&mut self, uids: &[u32], flags: &[String]) -> TransportResult<()> {
         self.store_flags(uids, flags, StoreType::Remove)
+    }
+
+    fn uid_move(&mut self, uids: &[u32], mailbox: &str) -> TransportResult<u32> {
+        if uids.is_empty() {
+            return Ok(0);
+        }
+        let set = sequence_set_of_uids(uids)?;
+        let copyuid = self.client.r#move(
+            set.as_str()
+                .try_into()
+                .map_err(|e| TransportError::Protocol(format!("bad sequence set {set:?}: {e}")))?,
+            mailbox_owned(mailbox)?,
+            ImapMessageMoveOptions { uid: true },
+        )?;
+        Ok(copyuid
+            .and_then(|(_, _, dest)| dest.first().copied())
+            .unwrap_or(0))
     }
 
     fn fetch_body(&mut self, uid: u32) -> TransportResult<Option<BodyData>> {

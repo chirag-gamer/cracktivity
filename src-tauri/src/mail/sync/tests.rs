@@ -43,11 +43,15 @@ fn env() -> Env {
     let store = Store::open(dir.path(), &dek_target).unwrap();
     let account_id = dao::add_account(
         store.conn(),
-        "imap",
-        "me@example.com",
-        None,
-        "app_password",
-        "ref",
+        &dao::NewAccount {
+            provider: "imap",
+            email: "me@example.com",
+            display_name: None,
+            auth_type: "app_password",
+            credential_ref: "ref",
+            imap_host: None,
+            imap_port: None,
+        },
     )
     .unwrap();
     Env {
@@ -516,11 +520,15 @@ fn secrets_never_reach_disk() {
     let store = Store::open(dir.path(), &dek_target).unwrap();
     let _ = dao::add_account(
         store.conn(),
-        "imap",
-        "x@y.z",
-        None,
-        "app_password",
-        "cracktivity.test.acct",
+        &dao::NewAccount {
+            provider: "imap",
+            email: "x@y.z",
+            display_name: None,
+            auth_type: "app_password",
+            credential_ref: "cracktivity.test.acct",
+            imap_host: None,
+            imap_port: None,
+        },
     );
 
     // Load the DEK exactly as the app does, to have its raw bytes to grep for.
@@ -550,4 +558,64 @@ fn backoff_is_exponential_with_cap() {
     assert_eq!(super::backoff_delay(3), Duration::from_secs(8));
     assert_eq!(super::backoff_delay(7), Duration::from_secs(60));
     assert_eq!(super::backoff_delay(50), Duration::from_secs(60), "capped");
+}
+
+/// Phase 3: classification runs inside the sync path (D-013) — the stored
+/// `importance` column distinguishes newsletters from direct mail with zero
+/// network beyond the mail transport itself (FR-12 AC's store-side seed).
+#[test]
+fn sync_classifies_newsletters_and_direct_mail() {
+    let e = env();
+    let mut mb = crate::mail::mock::MockMailbox {
+        name: "INBOX".into(),
+        uidvalidity: 7,
+        ..Default::default()
+    };
+    let mut news = msg("Weekly digest", "n1@x", None, "news@corp.com", &[]);
+    news.headers.insert("to".into(), "me@example.com".into());
+    news.headers
+        .insert("list-unsubscribe".into(), "<https://corp.com/unsub>".into());
+    mb.push(news);
+    let mut direct = msg("Lunch tomorrow?", "p1@x", None, "friend@example.org", &[]);
+    direct.headers.insert("to".into(), "me@example.com".into());
+    mb.push(direct);
+    // A second mail from the newsletter sender *after* the user corrected it
+    // teaches via sender_stats (FR-11 AC, verified at the rules level in
+    // classify::tests; here we assert the plain pre-correction buckets).
+    let mut t = crate::mail::mock::MockTransport::new(mb);
+    t.folders = vec![crate::mail::transport::FolderInfo {
+        name: "INBOX".into(),
+        role: Some(crate::mail::transport::SpecialRole::Inbox),
+        subscribed: true,
+    }];
+
+    sync_folder(
+        &mut t,
+        &e.store,
+        e.account_id,
+        "INBOX",
+        &SyncOptions::default(),
+    )
+    .unwrap();
+
+    let rows: Vec<(String, Option<String>)> = e
+        .store
+        .conn()
+        .prepare("SELECT subject, importance FROM messages ORDER BY subject")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0],
+        ("Lunch tomorrow?".into(), Some("important".into())),
+        "direct mail to the account owner"
+    );
+    assert_eq!(
+        rows[1],
+        ("Weekly digest".into(), Some("other".into())),
+        "List-Unsubscribe bulk mail"
+    );
 }

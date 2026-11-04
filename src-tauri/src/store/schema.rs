@@ -200,4 +200,12 @@ CREATE INDEX idx_messages_unread ON messages(unread);
 CREATE INDEX idx_folders_account ON folders(account_id);
 "#;
 
-pub const MIGRATIONS: &[(&str, &str)] = &[("1_create_core_schema", V1)];
+/// v2 — generic-IMAP connection data (FR-1 manual entry): preset providers
+/// resolve host/port from `providers::ALL`; manual accounts store theirs.
+pub const V2: &str = r"
+ALTER TABLE accounts ADD COLUMN imap_host TEXT;
+ALTER TABLE accounts ADD COLUMN imap_port INTEGER;
+";
+
+pub const MIGRATIONS: &[(&str, &str)] =
+    &[("1_create_core_schema", V1), ("2_account_imap_host", V2)];

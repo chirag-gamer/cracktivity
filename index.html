@@ -7,6 +7,17 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // E2E diagnostics: surface module/eval errors into the DOM so a
+      // headless run can read them (WebView2 console is not accessible via
+      // native WebDriver).
+      window.addEventListener("error", function (e) {
+        var d = document.createElement("pre");
+        d.id = "js-error";
+        d.textContent = "JS-ERROR: " + (e.message || e.type) + " @ " + (e.filename || "") + ":" + e.lineno;
+        document.body.appendChild(d);
+      });
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

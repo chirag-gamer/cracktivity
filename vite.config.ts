@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [react()],
   test: {
     include: ["src/tests/**/*.test.{ts,tsx}"],
+    environment: "jsdom",
+    setupFiles: ["src/tests/setup.ts"],
   },
   clearScreen: false,
   server: {

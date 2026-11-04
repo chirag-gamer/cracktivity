@@ -210,6 +210,27 @@ impl MailTransport for MockTransport {
         Ok(())
     }
 
+    fn uid_move(&mut self, uids: &[u32], mailbox: &str) -> TransportResult<u32> {
+        self.tick()?;
+        let moved: Vec<_> = {
+            let src = self.active("")?;
+            uids.iter().filter_map(|u| src.messages.remove(u)).collect()
+        };
+        let dst = self
+            .mailboxes
+            .iter_mut()
+            .find(|m| m.name == mailbox)
+            .ok_or_else(|| TransportError::Protocol(format!("no such mailbox: {mailbox}")))?;
+        let mut new_uid = 0;
+        for m in moved {
+            let uid = dst.uidnext.max(1);
+            dst.uidnext = uid + 1;
+            dst.messages.insert(uid, m);
+            new_uid = uid;
+        }
+        Ok(new_uid)
+    }
+
     fn fetch_body(&mut self, uid: u32) -> TransportResult<Option<BodyData>> {
         self.tick()?;
         let mb = self.active("")?;

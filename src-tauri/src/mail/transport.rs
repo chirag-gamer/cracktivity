@@ -102,6 +102,9 @@ pub trait MailTransport {
     fn fetch_flags(&mut self, range: UidRange) -> TransportResult<Vec<(u32, Vec<String>)>>;
     fn uid_store_add(&mut self, uids: &[u32], flags: &[String]) -> TransportResult<()>;
     fn uid_store_remove(&mut self, uids: &[u32], flags: &[String]) -> TransportResult<()>;
+    /// `UID MOVE` (RFC 6851) — archive path. Returns the new UID when the
+    /// server reports COPYUID, else 0.
+    fn uid_move(&mut self, uids: &[u32], mailbox: &str) -> TransportResult<u32>;
     /// Lazy body fetch (spec §4.5): text and html parts, PEEK semantics.
     fn fetch_body(&mut self, uid: u32) -> TransportResult<Option<BodyData>>;
     /// Waits up to `timeout_secs` for one round of server activity.

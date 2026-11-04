@@ -15,12 +15,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2.12", features = [] }
+tauri = { version = "2.12", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 thiserror = "2"
+# Sanitization (spec §8 v1): ammonia whitelist + attribute_filter rewrites.
+ammonia = "4"
+# Global hotkey for the notch panel (D-011).
+tauri-plugin-global-shortcut = "2"
 
 # Locked stack (D-006/D-007/D-009): SQLCipher-bundled rusqlite + Credential Manager
 rusqlite = { version = "0.41", features = ["bundled-sqlcipher-vendored-openssl"] }
@@ -37,7 +41,7 @@ ureq = "3.5.1"
 sha2 = "0.11.1"
 base64 = "0.23.1"
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"

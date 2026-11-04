@@ -4,6 +4,7 @@
 
 pub mod dao;
 pub mod dek;
+pub mod queries;
 pub mod schema;
 
 use std::path::Path;
