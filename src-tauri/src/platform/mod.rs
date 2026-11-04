@@ -2,3 +2,5 @@
 //! DPAPI, tray, hotkeys. Tray/hotkeys land in Phase 3.
 pub mod dpapi;
 pub mod keyring;
+pub mod oauth;
+pub mod providers;

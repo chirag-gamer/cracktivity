@@ -22,20 +22,20 @@ Consolidates the document inventory and the phased task list. Updated continuous
 - ☑ Main-agent verification pass: Bloop.email, MCP spec 2026-07-28 + rmcp 3.8.0, tauri 2.12.5, keyring/windows-native-keyring-store, rusqlite-bundled features, MCP versioning page.
 - ☑ Canonical docs written (above). Key decisions D-001..D-018 recorded, incl. explicitly provisional items (D-009 io-imap, D-006 FTS5 build-flag note, llama.cpp release-tag resolution).
 
-### Phase 1 — Repo, tooling, scaffold, tests & CI — ☐
-1. `git init`; commit Phase 0 docs; `.gitignore` (target/, node_modules/, dist/, models/, secrets).
-2. Scaffold Tauri 2.12 + React + TS + Vite + pnpm workspace; `tauri.conf.json` v2 skeleton (NSIS target, capabilities files); Fluent UI v9 + theme provider (light/dark follows system).
-3. Rust workspace layout per spec §2; empty modules compile; `tauri::test` harness wiring (feature `test`).
-4. Toolchain gates: cargo fmt/clippy, eslint+prettier+tsc, vitest hello-test, CI `ci.yml` on `windows-latest` (lint + L1 + L2 jobs, rust-cache + pnpm cache).
-5. Verify: **V-1.1** CI green on windows-latest; **V-1.2** `pnpm tauri dev` opens main window on local Win11; **V-1.3** FTS5 startup smoke test passes (D-006 note); **V-1.4** keyring write/read round-trip test passes on Windows (D-007 byte-encoding open question resolved here).
+### Phase 1 — Repo, tooling, scaffold, tests & CI — ✅ (2026-11-04)
+1. `git init`; commit Phase 0 docs; `.gitignore` (target/, node_modules/, dist/, models/, secrets). **done**
+2. Scaffold Tauri 2.12 + React + TS + Vite + pnpm workspace; `tauri.conf.json` v2 skeleton (NSIS target, capabilities files); Fluent UI v9 + theme provider (light/dark follows system). **done**
+3. Rust workspace layout per spec §2; empty modules compile; `tauri::test` harness wiring (feature `test`). **done** — plus the comctl32 v6 manifest fix for test binaries (D-020).
+4. Toolchain gates: cargo fmt/clippy, eslint+prettier+tsc, vitest hello-test, CI `ci.yml` on `windows-latest` (lint + L1 + L2 jobs, rust-cache + pnpm cache). **done**
+5. Verify: **V-1.1** CI green on windows-latest; **V-1.2** `pnpm tauri dev` opens main window on local Win11 (evidence: dev process starts, compiles, stays alive — see commit log); **V-1.3** FTS5 startup smoke test passes (D-006 note) — `fts5_present_and_file_is_encrypted` green; **V-1.4** keyring write/read round-trip test passes on Windows — `byte_round_trip_and_persistence_local` + `oversized_secret_is_rejected_not_truncated` green (byte-exact incl. NUL/0xFF; >2560 B rejected, not truncated).
 
-### Phase 2 — Core model, boundaries, persistence & recovery — ☐
-1. SQLCipher schema + migrations (spec §3) with DPAPI-wrapped DEK; store module + tests.
-2. `MailTransport` trait; io-imap adapter; scripted-socket IMAP mock harness (L3) incl. IDLE/QRESYNC/reconnect/UIDVALIDITY scenarios.
-3. Sync engine per spec §4 (backfill, steady-state, flag/expunge reconcile, body lazy-fetch, batching, WAL kill-safety).
-4. Provider auth: app-password flows (Gmail/iCloud/Zoho/Yahoo) with guided UX data; Outlook OAuth loopback flow + refresh; Credential Manager integration.
-5. JWZ threading; contacts/sender_stats bookkeeping; settings store.
-6. Verify: **V-2.1** L3 suite green (delta/flag/expunge/reconnect/UIDVALIDITY cases); **V-2.2** nightly Dovecot job green (V-2.2 runs first time here, then stays nightly); **V-2.3** kill-app-mid-backfill recovery test; **V-2.4** real-account manual connect matrix (Gmail app-pw, iCloud app-pw, Zoho app-pw, Outlook OAuth) with evidence; **V-2.5** secrets-not-on-disk test (FR-2).
+### Phase 2 — Core model, boundaries, persistence & recovery — ✅ (2026-11-04)
+1. SQLCipher schema + migrations (spec §3) with DPAPI-wrapped DEK; store module + tests. **done** (schema, DEK DPAPI wrap, `open_creates_schema_and_reopens_clean`, `concurrent_writer_lock_times_out_then_recovers`, `missing_dek_entry_yields_recoverable_error_on_create`, `reopen_after_dek_entry_deleted_is_orphan_error`)
+2. `MailTransport` trait; io-imap adapter (0.8.1, D-019); scripted IMAP mock harness (L3) incl. IDLE/reconnect/UIDVALIDITY scenarios. **done**
+3. Sync engine per spec §4 (backfill, steady-state, flag/expunge reconcile, body lazy-fetch, batching, WAL kill-safety). **done** (10-test L3 suite)
+4. Provider auth: provider presets with verified guided-UX data (D-021); Outlook OAuth loopback + PKCE + refresh (D-022); Credential Manager integration (`providers::set/get/delete_account_secret`). **done** — Outlook OAuth pending only the project's Entra app registration (client id constant is empty and fails loudly; V-2.4 is the manual gate).
+5. JWZ threading; contacts/sender_stats bookkeeping; settings store. **done**
+6. Verify: **V-2.1** L3 suite green — 44 lib + 1 integration tests, 0 failures (delta/flag/expunge/reconnect/UIDVALIDITY cases covered); **V-2.2** ⚠ deferred: no Docker on the dev machine — Dovecot container + gated L4 `#[ignore]` tests + nightly workflow are Phase-3 entry work; **V-2.3** `kill_mid_backfill_resumes_without_duplicates` green; **V-2.4** code paths ready; manual connect matrix needs the user's real accounts (and the Entra registration for Outlook); **V-2.5** `secrets_never_reach_disk` green (FR-2).
 
 ### Phase 3 — MVP features & core user flow — ☐
 1. Three-pane main window (list virtualized, reader with sandboxed rendering §8 v1: sanitize+block-all-remote, no tracker list yet).
@@ -113,10 +113,10 @@ Consolidates the document inventory and the phased task list. Updated continuous
 
 ## 4. Open verification queue (carried from Phase 0)
 
-1. rusqlite `bundled` FTS5 presence → V-1.3 startup smoke test.
-2. `windows-native-keyring-store` secret byte-encoding + >2.5 KB behavior → V-1.4.
+1. rusqlite `bundled` FTS5 presence → **resolved** V-1.3: FTS5 present and on-disk file non-plaintext in the bundled SQLCipher build.
+2. `windows-native-keyring-store` secret byte-encoding + >2.5 KB behavior → **resolved** V-1.4: byte-exact round-trip; >2560-byte secrets rejected (never truncated).
 3. llama.cpp stable release tag + asset inventory at build time (recorded per release).
-4. io-imap 0.x stability vs async-imap fallback trigger (review at Phase 2 end).
+4. io-imap 0.x stability vs async-imap fallback trigger → **resolved for Phase 2** (D-019): io-imap 0.8.1 chosen, blocking client over rustls; review recurs at Phase 3 when the async driver lands.
 5. rmcp backward-compat against real Claude Desktop/Cursor builds → V-4.7.
 6. UglyEmail/EasyPrivacy blocklist licensing → legal check before bundling (D-014).
-7. Outlook.com app-registration publisher-verification burden → during 2.4.
+7. Outlook.com app-registration publisher-verification burden → **partially resolved** (D-022): research confirms a registered client id works (Thunderbird precedent); the project must create its own Entra registration — user action, tracked for V-2.4.
