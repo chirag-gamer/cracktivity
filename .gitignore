@@ -1,0 +1,31 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+dist/
+coverage/
+
+# Tauri build artifacts
+src-tauri/gen/schemas/
+src-tauri/target/
+
+# AI models (downloaded at runtime, never committed)
+models/
+
+# Secrets — never commit credentials of any kind
+*.env
+.env*
+*.key
+*.pem
+secrets/
+
+# Local app data created by dev runs
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# OS / editor
+Thumbs.db
+.DS_Store
