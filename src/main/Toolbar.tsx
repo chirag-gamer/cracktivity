@@ -95,14 +95,14 @@ export function SearchResults({
 }) {
   return (
     <div className="pane-list" data-testid="search-results">
-      {results.length === 0 && <div className="empty">No matches</div>}
+      {results.length === 0 && <div className="empty">{S.noMatches}</div>}
       {results.map((r) => (
         <button
           key={r.message_id}
           className="row search-row"
           onClick={() =>
             onOpen({
-              thrid: r.thrid ?? String(r.message_id),
+              thrid: r.thrid ?? `__msg-${r.message_id}`,
               account_id: r.account_id,
               account_email: "",
               subject: r.subject,

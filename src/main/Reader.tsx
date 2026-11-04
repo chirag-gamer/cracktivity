@@ -16,7 +16,7 @@ function MailFrame({ body }: { body: OpenedBody }) {
     return (
       <Tooltip content={S.blockedImages(body.blocked_images)} relationship="label">
         <iframe
-          title="mail body"
+          title={S.mailFrameTitle}
           sandbox=""
           srcDoc={body.html}
           className="mail-frame"
@@ -63,24 +63,24 @@ function MessageCard({
         <div className="msg-actions">
           <button
             className="link-button"
-            title="Toggle unread (u)"
+            title={S.toggleUnreadTitle}
             onClick={() => onMarkRead(m)}
           >
-            {m.unread ? "mark read" : "mark unread"}
+            {m.unread ? S.markRead : S.markUnread}
           </button>
           <button
             className="link-button"
-            title="Toggle star (s)"
+            title={S.toggleStarTitle}
             onClick={() => ipc.setStarred(m.id, !m.starred).catch(() => {})}
           >
-            {m.starred ? "★" : "☆"}
+            {m.starred ? S.star : S.unstar}
           </button>
           <button
             className="link-button"
-            title="Archive (e)"
+            title={S.archiveTitle}
             onClick={() => ipc.archiveMessage(m.id).catch(() => {})}
           >
-            archive
+            {S.archive}
           </button>
         </div>
       </header>

@@ -29,7 +29,22 @@ export function MainApp() {
     cursor.current = 0;
   }, [mail.scope, mail.filter, search]);
 
-  const currentThreads = search ?? mail.threads;
+  // Search rows are keyboard-selectable too (FR-30/FR-9): same mapping the
+  // click path uses; a null thrid (pre-threading row) selects by message id.
+  const searchAsThreads: ThreadRow[] = (search ?? []).map((r) => ({
+    thrid: r.thrid ?? `__msg-${r.message_id}`,
+    account_id: r.account_id,
+    account_email: "",
+    subject: r.subject,
+    snippet: r.snippet,
+    from: r.from,
+    last_date: r.date,
+    msg_count: 1,
+    unread_count: r.unread ? 1 : 0,
+    starred: false,
+    importance: null,
+  }));
+  const currentThreads = search ? searchAsThreads : mail.threads;
 
   const selectAt = useCallback(
     (idx: number) => {
@@ -41,10 +56,14 @@ export function MainApp() {
     [currentThreads, mail],
   );
 
-  // Auto mark-read follows the reader: when a thread is selected, mark its
-  // unread messages read (local now, server flag via the driver).
+  // Opening a thread marks its unread messages read — keyed on the thread
+  // identity only, so the refresh triggered by 'u' (mark unread) cannot
+  // immediately re-mark it read.
+  const lastMarkedThrid = useRef<string | null>(null);
   useEffect(() => {
-    if (!mail.selectedThrid) return;
+    if (!mail.selectedThrid || lastMarkedThrid.current === mail.selectedThrid)
+      return;
+    lastMarkedThrid.current = mail.selectedThrid;
     mail.messages
       .filter((m) => m.unread)
       .forEach((m) => ipc.markRead(m.id, true).catch(() => {}));
@@ -83,7 +102,12 @@ export function MainApp() {
             .catch(() => {});
         }
       },
-      toggleUnread: () => markThreadRead(false),
+      toggleUnread: () => {
+        const anyUnread = mail.messages.some((m) => m.unread);
+        markThreadRead(!anyUnread);
+        // Keep the open-thread effect from re-marking on the next refresh.
+        lastMarkedThrid.current = mail.selectedThrid;
+      },
       toggleStar: () => {
         const t = newestOf(mail.selectedThrid);
         if (!t) return;
@@ -114,7 +138,8 @@ export function MainApp() {
     }),
     [mail.accounts, mail.selectedThrid, mail.threads, mail.messages, mail, selectAt, markThreadRead, search],
   );
-  useKeyboard(actions);
+  const modalOpen = overlay || palette || adding;
+  useKeyboard(actions, !modalOpen);
 
   const commands: PaletteCommand[] = useMemo(
     () => [

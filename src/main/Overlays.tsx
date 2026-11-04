@@ -56,10 +56,30 @@ export function CommandPalette({
   commands: PaletteCommand[];
 }) {
   const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
   const filtered = useMemo(
     () => commands.filter((c) => c.label.toLowerCase().includes(q.toLowerCase())),
     [commands, q],
   );
+  // Keyboard-first (FR-30): arrows move, Enter runs. The keys are consumed
+  // here so the window-level handler never sees them.
+  const onKey = (e: React.KeyboardEvent) => {
+    if (filtered.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      e.stopPropagation();
+      setHi((i) => (i + 1) % filtered.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      setHi((i) => (i - 1 + filtered.length) % filtered.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      filtered[hi]?.run();
+      onClose();
+    }
+  };
   return (
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface className="palette-surface">
@@ -68,18 +88,28 @@ export function CommandPalette({
           <DialogContent>
             <Input
               autoFocus
-              placeholder="Type a command…"
+              placeholder={S.palettePlaceholder}
               value={q}
-              onChange={(_, d) => setQ(d.value)}
+              onChange={(_, d) => {
+                setQ(d.value);
+                setHi(0);
+              }}
+              onKeyDown={onKey}
               data-testid="palette-input"
             />
-            <div className="palette-list" role="listbox">
-              {filtered.map((c) => (
+            <div
+              className="palette-list"
+              role="listbox"
+              aria-activedescendant={filtered[hi] ? `palette-opt-${filtered[hi].id}` : undefined}
+            >
+              {filtered.map((c, i) => (
                 <button
                   key={c.id}
-                  className="nav-item"
+                  id={`palette-opt-${c.id}`}
+                  className={`nav-item${i === hi ? " active" : ""}`}
                   role="option"
-                  aria-selected={false}
+                  aria-selected={i === hi}
+                  onMouseEnter={() => setHi(i)}
                   onClick={() => {
                     c.run();
                     onClose();

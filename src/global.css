@@ -9,6 +9,10 @@ body,
   margin: 0;
 }
 
+.provider-root {
+  height: 100%;
+}
+
 body {
   overflow: hidden;
   font-family: "Segoe UI", system-ui, sans-serif;

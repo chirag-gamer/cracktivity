@@ -91,7 +91,7 @@ export function AddAccountDialog({
                 <>
                   {" "}
                   <a href={preset.url} target="_blank" rel="noopener noreferrer">
-                    open provider page
+                    {S.providerPage}
                   </a>
                 </>
               )}

@@ -3,7 +3,7 @@
  * @tanstack/react-virtual drives absolute-positioned rows inside one
  * scroller; Fluent paints them (no v9 virtualized list exists — verified).
  */
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Text, Badge } from "@fluentui/react-components";
 import { S } from "../shared/strings";
@@ -33,6 +33,12 @@ export function MessageList({
     overscan: 12,
   });
 
+  // Keyboard selection must stay visible (j/k past the viewport edge).
+  const selectedIndex = threads.findIndex((t) => t.thrid === selectedThrid);
+  useEffect(() => {
+    if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex);
+  }, [selectedIndex, virtualizer]);
+
   if (loading && threads.length === 0) {
     return (
       <div className="pane-list empty" role="status">
@@ -49,7 +55,14 @@ export function MessageList({
   }
 
   return (
-    <div className="pane-list" ref={parentRef} role="listbox" aria-label={S.unifiedInbox}>
+    <div
+      className="pane-list"
+      ref={parentRef}
+      role="listbox"
+      aria-label={S.unifiedInbox}
+      tabIndex={0}
+      aria-activedescendant={selectedThrid ? `thread-opt-${selectedThrid}` : undefined}
+    >
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const t = threads[vi.index];
@@ -59,6 +72,7 @@ export function MessageList({
             <div
               key={t.thrid}
               role="option"
+              id={`thread-opt-${t.thrid}`}
               aria-selected={selected}
               data-testid="thread-row"
               data-thrid={t.thrid}

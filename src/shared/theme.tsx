@@ -33,12 +33,12 @@ export function SystemThemeProvider({ children }: { children: React.ReactNode })
   const mode = useSystemThemeMode();
   return (
     <ModeContext.Provider value={mode}>
-      {/* FluentProvider renders a div that does not self-fill; without the
-          explicit height the three-pane grid collapses to zero (verified in
-          the first e2e run: elements existed but were never displayed). */}
-      <FluentProvider theme={themeFor(mode)} style={{ height: "100%" }}>
-        {children}
-      </FluentProvider>
+      {/* FluentProvider does not self-fill, but its style prop is copied
+          into every portal surface (Tooltip/Dialog, fluentui #29184) — so
+          the height lives on this wrapper, not on the provider. */}
+      <div className="provider-root">
+        <FluentProvider theme={themeFor(mode)}>{children}</FluentProvider>
+      </div>
     </ModeContext.Provider>
   );
 }

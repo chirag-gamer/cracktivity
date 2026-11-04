@@ -11,7 +11,7 @@ Consolidates the document inventory and the phased task list. Updated continuous
 | README.md | User-facing front page (structure mirrors chirag-gamer/button) | ☑ Phase 0 |
 | prd.md | Goals, user stories, FR-1..34 + AC, NFRs, non-goals | ☑ Phase 0 |
 | spec.md | Architecture, data model, sync/AI/MCP/security, test strategy | ☑ Phase 0 |
-| decisions.md | Append-only decision ledger D-001..D-018 | ☑ Phase 0 (living) |
+| decisions.md | Append-only decision ledger (living; D-001..D-028) | ☑ Phase 0 (living) |
 | AGENTS.md | Agent contract: source of truth, safety, workflow, gates | ☑ Phase 0 |
 | plan.md | This file — tasks, phases, traceability | ☑ Phase 0 (living) |
 
@@ -95,7 +95,7 @@ Consolidates the document inventory and the phased task list. Updated continuous
 | FR-17 Compose/drafts | §4 | 3.2 | V-3.1 |
 | FR-18 SMTP send | §4.6 | 3.2 | V-3.5 |
 | FR-19 Remote content | §8 | 4.4 | V-4.4 |
-| FR-20 AI opt-in | §6.5 | 3.6 | V-3.1 |
+| FR-20 AI opt-in | §6.5 | 3.6 (open, D-025) | V-3.1 dialog leg deferred with compose |
 | FR-21 Summarize | §6 | 4.5 | V-4.5 |
 | FR-22 Draft assist | §6 | 4.5 | V-4.5 |
 | FR-23 Tiering | §6.1 | 4.5 | V-4.5 |

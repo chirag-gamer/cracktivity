@@ -43,7 +43,6 @@ pub enum DriverMsg {
     Action(MessageAction),
     /// Wake one account for an immediate sync cycle.
     SyncNow(i64),
-    Quit,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -54,9 +53,13 @@ pub enum MessageAction {
 }
 
 /// Everything the driver thread needs; produced together with [`AppState`].
+/// The store here is a **second connection**: WAL allows the driver's
+/// network-bound sync loop and the command layer's short queries to run
+/// concurrently — the command-side mutex is never held across I/O
+/// (FR-6: the list stays usable during backfill; review-pass D-028).
 pub struct DriverChannels {
     pub rx: mpsc::Receiver<DriverMsg>,
-    pub store: Arc<Mutex<Store>>,
+    pub store: Store,
     pub statuses: Arc<Mutex<HashMap<i64, AccountStatus>>>,
 }
 
@@ -76,17 +79,19 @@ impl AppState {
             profile_dir,
             crate::store::dek::DEFAULT_DEK_TARGET,
         )?));
+        // Dedicated connection for the driver (see DriverChannels).
+        let driver_store = Store::open(profile_dir, crate::store::dek::DEFAULT_DEK_TARGET)?;
         let (tx, rx) = mpsc::channel::<DriverMsg>();
         let statuses = Arc::new(Mutex::new(HashMap::new()));
         Ok((
             AppState {
                 store: store.clone(),
-                tx: tx.clone(),
+                tx,
                 statuses: statuses.clone(),
             },
             DriverChannels {
                 rx,
-                store,
+                store: driver_store,
                 statuses,
             },
         ))
@@ -237,7 +242,7 @@ fn connect(acc: &AccountRow) -> Result<ImapTransport, String> {
 /// cycle with backoff, spec §11) and set FR-5 state.
 fn sync_cycle(
     app: Option<&AppHandle>,
-    store: &Arc<Mutex<Store>>,
+    store: &Store,
     statuses: &Arc<Mutex<HashMap<i64, AccountStatus>>>,
     acc: &AccountRow,
     transport: &mut Option<ImapTransport>,
@@ -260,12 +265,11 @@ fn sync_cycle(
         }
     }
     set_status(statuses, app, acc.id, "syncing", None);
-    let Ok(st) = store.lock() else { return false };
     let result = match transport.as_mut() {
         Some(t) => {
-            sync::sync_folder(t, &st, acc.id, "INBOX", &SyncOptions::default()).and_then(|_| {
-                if let Some(f) = dao::folder_state_by_name(st.conn(), acc.id, "INBOX")? {
-                    sync::fetch_missing_bodies(t, &st, f.id, sync::BODY_PREFETCH_LIMIT)?;
+            sync::sync_folder(t, store, acc.id, "INBOX", &SyncOptions::default()).and_then(|_| {
+                if let Some(f) = dao::folder_state_by_name(store.conn(), acc.id, "INBOX")? {
+                    sync::fetch_missing_bodies(t, store, f.id, sync::BODY_PREFETCH_LIMIT)?;
                 }
                 Ok(())
             })
@@ -298,7 +302,7 @@ fn sync_cycle(
 /// the local mirror inside `mail::actions`).
 fn run_action(
     app: Option<&AppHandle>,
-    store: &Arc<Mutex<Store>>,
+    store: &Store,
     statuses: &Arc<Mutex<HashMap<i64, AccountStatus>>>,
     acc: &AccountRow,
     transport: &mut Option<ImapTransport>,
@@ -317,19 +321,16 @@ fn run_action(
             }
         }
     }
-    let result = {
-        let Ok(st) = store.lock() else { return };
-        let Some(t) = transport.as_mut() else { return };
-        match action {
-            MessageAction::MarkRead { message_id, read } => {
-                mail_actions::mark_read(t, &st, message_id, read)
-            }
-            MessageAction::SetStarred {
-                message_id,
-                starred,
-            } => mail_actions::set_starred(t, &st, message_id, starred),
-            MessageAction::Archive { message_id } => mail_actions::archive(t, &st, message_id),
+    let Some(t) = transport.as_mut() else { return };
+    let result = match action {
+        MessageAction::MarkRead { message_id, read } => {
+            mail_actions::mark_read(t, store, message_id, read)
         }
+        MessageAction::SetStarred {
+            message_id,
+            starred,
+        } => mail_actions::set_starred(t, store, message_id, starred),
+        MessageAction::Archive { message_id } => mail_actions::archive(t, store, message_id),
     };
     match result {
         Ok(()) => {
@@ -348,8 +349,10 @@ fn run_action(
 }
 
 /// The driver thread body: blocking IMAP + SQLite, woken by channel.
+/// Returns when the command side drops (app teardown) — process exit is
+/// owned by tauri; this thread never races it with `process::exit`.
 /// `app` is `None` in unit tests.
-pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) -> ! {
+pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) {
     let DriverChannels {
         rx,
         store,
@@ -361,10 +364,7 @@ pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) -> ! {
     let mut failures: HashMap<i64, u32> = HashMap::new();
 
     loop {
-        let accounts = store
-            .lock()
-            .map(|st| enabled_accounts(st.conn()))
-            .unwrap_or_default();
+        let accounts = enabled_accounts(store.conn());
         let now = Instant::now();
         let due: Vec<AccountRow> = accounts
             .iter()
@@ -406,7 +406,6 @@ pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) -> ! {
             .unwrap_or(Duration::from_secs(5))
             .min(Duration::from_secs(5));
         match rx.recv_timeout(wait) {
-            Ok(DriverMsg::Quit) => std::process::exit(0),
             Ok(DriverMsg::SyncNow(id)) => {
                 next_due.remove(&id);
             }
@@ -416,10 +415,7 @@ pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) -> ! {
                     | MessageAction::SetStarred { message_id, .. }
                     | MessageAction::Archive { message_id } => message_id,
                 };
-                let acc = store
-                    .lock()
-                    .ok()
-                    .and_then(|st| account_of_message(st.conn(), message_id));
+                let acc = account_of_message(store.conn(), message_id);
                 match acc {
                     Some(acc) => {
                         run_action(
@@ -439,7 +435,7 @@ pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) -> ! {
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => std::process::exit(0),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
 }

@@ -40,6 +40,14 @@ export function PanelApp() {
   }, []);
   useEffect(refresh, [refresh]);
 
+  // Keep the keyboard cursor visible in the 640px panel.
+  useEffect(() => {
+    document
+      .querySelectorAll('[data-testid="panel-row"]')
+      .item(idx)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [idx]);
+
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
@@ -147,9 +155,7 @@ export function PanelApp() {
         </div>
       )}
       <footer className="panel-footer">
-        <Text size={100}>
-          j/k move · e archive · u read · Enter open · Esc hide
-        </Text>
+        <Text size={100}>{S.panelHints}</Text>
         {queue.length > 0 && <Badge appearance="ghost">{queue.length}</Badge>}
       </footer>
     </div>

@@ -61,7 +61,7 @@ describe("MainApp", () => {
     expect(reader.querySelectorAll('[data-testid="msg-card"]').length).toBe(3);
   });
 
-  it("j/j/k move, and archive (e) targets the newest message of the thread", async () => {
+  it("j moves and archive (e) targets the newest message of the thread", async () => {
     const { findAllByTestId, findByTestId } = render(<MainApp />);
     await findAllByTestId("thread-row");
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));

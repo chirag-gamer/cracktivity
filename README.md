@@ -1,4 +1,4 @@
-**Status:** in development. Planning (Phase 0) is complete — see [plan.md](plan.md) for what happens next. There is no installer yet.
+**Status:** in development. Phases 0–3 core are built (encrypted local store, IMAP sync, Important/Other triage, notch panel, keyboard-first UI — see [plan.md](plan.md)); compose/Send and the on-device AI download land next. Development builds only — no signed installer yet.
 
 # cracktivity
 

@@ -17,11 +17,11 @@
     "@fluentui/react-components": "^9.75.1",
     "@fluentui/react-icons": "^2.0.345",
     "@tanstack/react-virtual": "^3.14.26",
+    "@tauri-apps/api": "^2.12.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/cli": "^2.12.4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

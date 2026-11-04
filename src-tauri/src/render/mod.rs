@@ -95,9 +95,14 @@ pub fn render_document(raw_html: &str) -> Rendered {
     });
 
     let body = builder.clean(raw_html).to_string();
+    // <base target="_blank"> redirects every link to a new window — which
+    // sandbox="" (no allow-popups) then blocks outright. Without it, a click
+    // would navigate the frame itself to the remote site (IP leak /
+    // in-reader phishing). The href (utm-stripped) stays intact for the
+    // Phase-4 external-open flow. Review-pass fix, D-028.
     Rendered {
         html: format!(
-            "<!DOCTYPE html><html><head>{CSP_META}<style>body{{margin:0;font:14px system-ui;padding:12px}}img{{display:none}}</style></head><body>{body}</body></html>"
+            "<!DOCTYPE html><html><head>{CSP_META}<base target=\"_blank\"><style>body{{margin:0;font:14px system-ui;padding:12px}}img{{display:none}}</style></head><body>{body}</body></html>"
         ),
         blocked_images: blocked.load(Ordering::Relaxed),
     }
@@ -143,11 +148,14 @@ mod tests {
     }
 
     #[test]
-    fn document_shape_carries_csp_meta() {
+    fn document_shape_carries_csp_meta_and_link_guard() {
         let out = render_document("<p>hello</p>");
         assert!(out.html.starts_with("<!DOCTYPE html>"));
         assert!(out.html.contains("Content-Security-Policy"));
         assert!(out.html.contains("default-src 'none'"));
+        // Links must target _blank so the sandbox (no allow-popups) makes
+        // them inert instead of navigating the reader frame off-site.
+        assert!(out.html.contains(r#"<base target="_blank">"#));
         assert!(out.html.contains("hello"));
         assert_eq!(out.blocked_images, 0);
     }

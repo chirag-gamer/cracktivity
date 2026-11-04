@@ -36,7 +36,6 @@ export const ipc = {
     invoke<OpenedBody>("message_body", { messageId }),
   searchMessages: (query: string) =>
     invoke<SearchRow[]>("search_messages", { query }),
-  unreadTotal: () => invoke<number>("unread_total"),
   markRead: (messageId: number, read: boolean) =>
     invoke<void>("mark_read", { messageId, read }),
   setStarred: (messageId: number, starred: boolean) =>

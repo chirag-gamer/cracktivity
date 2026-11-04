@@ -17,6 +17,9 @@ importers:
       '@tanstack/react-virtual':
         specifier: ^3.14.26
         version: 3.14.26(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@tauri-apps/api':
+        specifier: ^2.12.4
+        version: 2.12.4
       react:
         specifier: ^19.2.0
         version: 19.3.1
@@ -24,9 +27,6 @@ importers:
         specifier: ^19.2.0
         version: 19.3.1(react@19.3.1)
     devDependencies:
-      '@tauri-apps/api':
-        specifier: ^2.12.4
-        version: 2.12.4
       '@tauri-apps/cli':
         specifier: ^2.12.4
         version: 2.12.4

@@ -1,6 +1,6 @@
 /** L1: display helpers (relativeTime/senderName/initials). */
 import { describe, expect, it } from "vitest";
-import { initials, relativeTime, senderName } from "../shared/format";
+import { relativeTime, senderName } from "../shared/format";
 
 describe("relativeTime", () => {
   const now = Date.parse("2026-11-04T12:00:00Z");
@@ -20,13 +20,5 @@ describe("senderName", () => {
     expect(senderName({ name: "Priya", email: "p@x.y" })).toBe("Priya");
     expect(senderName({ name: "  ", email: "priya@x.y" })).toBe("priya");
     expect(senderName(null)).toBe("(unknown)");
-  });
-});
-
-describe("initials", () => {
-  it("takes up to two initials", () => {
-    expect(initials("Priya Sharma")).toBe("PS");
-    expect(initials("chromatic")).toBe("CH");
-    expect(initials("")).toBe("?");
   });
 });

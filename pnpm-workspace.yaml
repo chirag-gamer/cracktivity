@@ -1,7 +1,4 @@
 allowBuilds:
-  edgedriver: set this to true or false
+  edgedriver: true
   esbuild: true
-  geckodriver: set this to true or false
-onlyBuiltDependencies:
-  - edgedriver
-  - esbuild
+  geckodriver: false
