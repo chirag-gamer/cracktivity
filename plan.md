@@ -11,7 +11,7 @@ Consolidates the document inventory and the phased task list. Updated continuous
 | README.md | User-facing front page (structure mirrors chirag-gamer/button) | ☑ Phase 0 |
 | prd.md | Goals, user stories, FR-1..34 + AC, NFRs, non-goals | ☑ Phase 0 |
 | spec.md | Architecture, data model, sync/AI/MCP/security, test strategy | ☑ Phase 0 |
-| decisions.md | Append-only decision ledger (living; D-001..D-028) | ☑ Phase 0 (living) |
+| decisions.md | Append-only decision ledger (living; D-001..D-029) | ☑ Phase 0 (living) |
 | AGENTS.md | Agent contract: source of truth, safety, workflow, gates | ☑ Phase 0 |
 | plan.md | This file — tasks, phases, traceability | ☑ Phase 0 (living) |
 
@@ -47,7 +47,7 @@ Consolidates the document inventory and the phased task list. Updated continuous
 7. Verify: **V-3.1** L5 e2e **seeded legs GREEN 4/4** (2026-11-05 local Win11: hydration from encrypted cache → j/keyboard open reader → Ctrl+1 account switch → `/`+FTS5 search; WDIO + @wdio/tauri-service 1.5.1, v9-pinned, external tauri-driver 2.1.0, `--e2e-seed` idempotent); onboarding-dialog/add-account-UI and send/reply legs deferred with compose (D-025); **V-3.2** FlaUI Alt-Tab/hotkey — manual gate, recipe implemented; **V-3.3** low-end transparent-panel perf — open (D-011 gate); **V-3.4** FTS < 1 s @ 100k — open (benchmark harness TODO; L1/L3 cover correctness); **V-3.5** real Gmail/Outlook round-trip — open (needs user accounts; Outlook also blocked on the Entra registration, V-2.4).
 
 ### Phase 4 — Remaining approved features — ☐
-1. Importance/Other: rule engine + counters + correction learning; split views (FR-11..12).
+1. Importance/Other: ~~rule engine~~ + counters + correction learning; split views (FR-11..12). **partial (shipped in Phase 3, D-025)**: rules + per-sender corrections + Important/Other tabs live; remaining: opened/deleted counters feeding the rules, the optional learned layer, and the V-4.1 ≥ 90 % seeded-batch gate.
 2. Follow-ups ("Waiting for Reply") + one-click follow-up draft (FR-13).
 3. Subscription cleanup view: sender ranking, RFC 8058 POST (with DKIM-header caveat handling) / mailto fallback, bulk archive + Undo (FR-14).
 4. Tracker blocking full pipeline (ammonia→lol_html→link-clean→sandbox iframe) + per-sender allowlist + badges (FR-15, FR-19).
@@ -116,7 +116,7 @@ Consolidates the document inventory and the phased task list. Updated continuous
 1. rusqlite `bundled` FTS5 presence → **resolved** V-1.3: FTS5 present and on-disk file non-plaintext in the bundled SQLCipher build.
 2. `windows-native-keyring-store` secret byte-encoding + >2.5 KB behavior → **resolved** V-1.4: byte-exact round-trip; >2560-byte secrets rejected (never truncated).
 3. llama.cpp stable release tag + asset inventory at build time (recorded per release).
-4. io-imap 0.x stability vs async-imap fallback trigger → **resolved for Phase 2** (D-019): io-imap 0.8.1 chosen, blocking client over rustls; review recurs at Phase 3 when the async driver lands.
+4. io-imap 0.x stability vs async-imap fallback trigger → **resolved for Phases 2–3** (D-019/D-026): io-imap 0.8.1 chosen, blocking client over rustls; Phase 3 shipped on the 90-s polling fallback (`idle_once` = NOOP poll). The eventful `watch_mailbox` IDLE driver remains future work — re-review when it lands.
 5. rmcp backward-compat against real Claude Desktop/Cursor builds → V-4.7.
 6. UglyEmail/EasyPrivacy blocklist licensing → legal check before bundling (D-014).
 7. Outlook.com app-registration publisher-verification burden → **partially resolved** (D-022): research confirms a registered client id works (Thunderbird precedent); the project must create its own Entra registration — user action, tracked for V-2.4.

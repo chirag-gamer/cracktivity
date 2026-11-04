@@ -47,7 +47,9 @@ pnpm tauri dev -- --mcp # run MCP role over stdio (for manual agent testing)
 pnpm vitest run         # L1 frontend tests
 cargo test              # L2/L3 Rust tests (src-tauri)
 cargo test -- --ignored # L4 gated live-IMAP tests (needs Dovecot container)
-pnpm wdio run           # L5 e2e (tauri-driver / CDP)
+pnpm e2e                # L5 e2e: builds nothing itself — needs a debug build (cargo build in
+                        # src-tauri) and tauri-driver; starts vite, runs WDIO against
+                        # cracktivity.exe --e2e-seed, tears both down (D-027)
 pnpm tauri build        # NSIS installer
 ```
 

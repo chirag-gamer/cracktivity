@@ -42,18 +42,20 @@ cracktivity/
 ├── src-tauri/
 │   ├── src/
 │   │   ├── main.rs           # role dispatch (GUI vs --mcp)
+│   │   ├── lib.rs            # builder: plugins, windows, command registry
+│   │   ├── app.rs            # AppState, IPC commands, sync-driver thread, e2e seed
 │   │   ├── accounts/         # provider presets, auth flows
-│   │   ├── mail/             # imap client wrapper, sync engine, threading, smtp
-│   │   ├── store/            # sqlcipher schema, migrations, fts
+│   │   ├── mail/             # imap adapter, sync engine, threading, actions; smtp (Phase-3 tail)
+│   │   ├── store/            # sqlcipher schema, migrations, fts, ui queries
 │   │   ├── ai/               # model manager, chat engines, prompts
 │   │   ├── classify/         # rules, counters, optional learned layer
-│   │   ├── render/           # sanitize pipeline
+│   │   ├── render/           # sanitize pipeline (v1: ammonia pass, D-026)
 │   │   ├── mcp/              # rmcp tools (used by --mcp role)
-│   │   └── platform/         # keyring, dpapi, tray, hotkeys, windows bits
+│   │   └── platform/         # keyring, dpapi, oauth; shell.rs = panel/tray/hotkey (D-011)
 │   ├── capabilities/*.json
 │   ├── resources/llama-server.exe   # pinned llama.cpp build
 │   └── tauri.conf.json
-├── tests/                    # wdio e2e, playwright-cdp, fixtures
+├── e2e/                      # wdio config + launcher + specs (@wdio/tauri-service, D-027)
 └── .github/workflows/        # ci.yml, nightly.yml, release.yml
 ```
 
@@ -114,7 +116,7 @@ Per account, per folder, one tokio task. Transport behind the `MailTransport` tr
 1. **Connect & auth** (XOAUTH2 or LOGIN with app password), TLS via rustls.
 2. **Folder discovery:** `LIST` with SPECIAL-USE; map roles; detect UIDVALIDITY changes → on change: drop UID-keyed rows for that folder, re-baseline (FR-8 no-data-loss rule: messages are re-fetched, not lost).
 3. **Initial backfill:** fetch newest N (backfill_days) in batches of 500: `UID FETCH <range> (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)])`. Always `.PEEK` (never set `\Seen` implicitly). `X-GM-THRID` is not a header — it is a Gmail FETCH item that generic HEADER.FIELDS cannot retrieve; fetch it extension-side when the server models it (D-019), else JWZ covers Gmail correctly. Write in transactions of 500; UI shows progress; kill-safe (resumable via highest_uid).
-4. **Steady state:** if IDLE: idle with 25-min self-renew; on untagged EXISTS → fetch new range (same header-only fetch); on FLAGS/FETCH events → update rows. If no IDLE (Outlook fallback): poll every 90 s. **Expunge/flag reconciliation without QRESYNC:** every 5 min (and after each IDLE burst), `UID SEARCH ALL` diff vs. local highest set + `FETCH (UID FLAGS)` snapshot diff. With QRESYNC: `SELECT ... (QRESYNC (last_uidvalidity highestmodseq))` and apply vanished/changed sets.
+4. **Steady state:** if IDLE: idle with 25-min self-renew; on untagged EXISTS → fetch new range (same header-only fetch); on FLAGS/FETCH events → update rows. If no IDLE (Outlook fallback): poll every 90 s. *(v1 driver ships the 90-s polling path only — io-imap's eventful `watch_mailbox` IDLE remains future work, D-019/D-026.)* **Expunge/flag reconciliation without QRESYNC:** every 5 min (and after each IDLE burst), `UID SEARCH ALL` diff vs. local highest set + `FETCH (UID FLAGS)` snapshot diff. With QRESYNC: `SELECT ... (QRESYNC (last_uidvalidity highestmodseq))` and apply vanished/changed sets.
 5. **Body fetch:** on open + prefetch of text parts for the 10 newest unread in the active view. Attachment blobs only on explicit save (FR-10).
 6. **Send path:** SMTP submission (STARTTLS 587 or implicit TLS 465 per provider matrix); on success, IMAP APPEND to the Sent folder with `\Seen` + date (FR-18); Outbox rows are retried with backoff; failure reasons surfaced (FR-5).
 
@@ -178,11 +180,12 @@ Settings toggle → kill child processes, clear engines, hide UI affordances. No
 - Triggers: tray left-click toggle; global shortcut plugin (`tauri-plugin-global-shortcut` builder pattern, `with_handler` → emit to panel).
 - Content: new-mail triage list (unread across accounts), quick actions (archive/reply/mark-read), deep-link into main window.
 - Known accepted limitations: elevated-window focus steals hotkey (needs UIAccess+signing — deferred); exclusive-fullscreen apps can cover the panel; Win10 falls back to squared corners.
+- v1 scope (D-026/D-025): the panel hides fully instead of resting as a notch strip (`set_ignore_cursor_events` unused); quick actions ship archive/mark-read — "reply" deep-links into the main window until compose lands.
 - Verification gate (Phase 3): transparent-panel perf on low-end hardware; if bad, opaque panel with themed background (decision recorded then).
 
 ## 8. Mail rendering & tracker blocking (D-014)
 
-Pipeline (Rust, on body open; result cached per message):
+Pipeline (Rust, on body open; result cached per message). *(v1 scope, D-026/D-028: a single ammonia pass implements steps 1+2's blocking and step 3 — block ALL remote images with a count, strip `utm_*`/click-ids — and wraps the output with a CSP meta plus `<base target="_blank">` (sandbox makes links inert). The `lol_html` `data-blocked-src` placeholder, tracker-list matching, per-sender image allowlist and the local image proxy arrive with "Show images" in Phase 4; the v1 render is computed on open, not cached.)*
 1. `ammonia` whitelist: strip `script, style, iframe, form, object, embed, meta, link, base`; drop all `on*` attributes, `javascript:`/`data:` hrefs; force `rel="noopener noreferrer"`.
 2. `lol_html` pass: remote `img[src|srcset]` → `data-blocked-src` placeholder + increment `tracking_count` (pixel heuristics: 1×1 dimensions, known tracker domains from bundled list); `cid:` → local attachment scheme.
 3. Link cleaning: strip `utm_*`, `fbclid`, `gclid`, `mc_eid`, `msclkid`, known redirect-tracker prefixes (bundled `blocklist` table; update channel opt-in).

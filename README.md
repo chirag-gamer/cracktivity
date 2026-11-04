@@ -1,4 +1,4 @@
-**Status:** in development. Phases 0–3 core are built (encrypted local store, IMAP sync, Important/Other triage, notch panel, keyboard-first UI — see [plan.md](plan.md)); compose/Send and the on-device AI download land next. Development builds only — no signed installer yet.
+**Status:** in development. Phases 0–3 core are built (encrypted local store, IMAP sync, Important/Other triage, notch panel, keyboard-first UI — see [plan.md](plan.md)). Compose/Send, follow-ups, subscription cleanup, the on-device AI download and the MCP server land in later phases. Development builds only — no signed installer yet.
 
 # cracktivity
 
@@ -51,7 +51,7 @@ cracktivity targets Windows 10 and Windows 11. On Windows 10 a few visual touche
 ## How your mail stays private
 
 - Passwords and tokens are stored in Windows Credential Manager. Your mail cache is an encrypted local database under your own user profile.
-- Remote images and trackers in email HTML are blocked by default. Known tracking pixels are stripped, and links are cleaned of tracking parameters before you click them.
+- Remote images in email HTML are blocked by default — all of them, so tracker pixels have nothing to load — and links are cleaned of tracking parameters before you click them. (A known-tracker list with per-sender image permissions arrives in a later build.)
 - The app keeps a network allowlist: your mail providers, plus optional things you explicitly turn on (the AI model download, app updates, a custom AI key). Nothing else. No telemetry, no analytics, no crash uploads — crash logs stay on your disk, and you can read them before you share them.
 
 ## Found a bug?
