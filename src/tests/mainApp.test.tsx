@@ -81,23 +81,6 @@ describe("MainApp", () => {
   it("u toggles polarity: unread thread → read, read thread → unread", async () => {
     const uReads: boolean[] = [];
     let threadIsUnread = true;
-    mockIPC((cmd) => {
-      switch (cmd) {
-        case "list_accounts":
-          return accounts;
-        case "account_statuses":
-          return [];
-        case "thread_list":
-          return threads.map((t) => ({ ...t })); // fresh identity per call
-        case "thread_messages":
-          return [message(4, { unread: threadIsUnread })];
-        case "message_body":
-          return { text: "b", html: null, blocked_images: 0, snippet: "b" };
-        default:
-          return null;
-      }
-    });
-    // The mock's mark_read arg capture needs the args variant:
     mockIPC((cmd, args) => {
       const a = (args ?? {}) as { read?: boolean };
       if (cmd === "mark_read") uReads.push(Boolean(a.read));
@@ -107,7 +90,7 @@ describe("MainApp", () => {
         case "account_statuses":
           return [];
         case "thread_list":
-          return threads.map((t) => ({ ...t }));
+          return threads.map((t) => ({ ...t })); // fresh identity per call
         case "thread_messages":
           return [message(4, { unread: threadIsUnread })];
         case "message_body":
