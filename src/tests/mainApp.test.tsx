@@ -78,6 +78,77 @@ describe("MainApp", () => {
     expect(archiveCalls[0]).toMatchObject({ messageId: 4 });
   });
 
+  it("u toggles polarity: unread thread → read, read thread → unread", async () => {
+    const uReads: boolean[] = [];
+    let threadIsUnread = true;
+    mockIPC((cmd) => {
+      switch (cmd) {
+        case "list_accounts":
+          return accounts;
+        case "account_statuses":
+          return [];
+        case "thread_list":
+          return threads.map((t) => ({ ...t })); // fresh identity per call
+        case "thread_messages":
+          return [message(4, { unread: threadIsUnread })];
+        case "message_body":
+          return { text: "b", html: null, blocked_images: 0, snippet: "b" };
+        default:
+          return null;
+      }
+    });
+    // The mock's mark_read arg capture needs the args variant:
+    mockIPC((cmd, args) => {
+      const a = (args ?? {}) as { read?: boolean };
+      if (cmd === "mark_read") uReads.push(Boolean(a.read));
+      switch (cmd) {
+        case "list_accounts":
+          return accounts;
+        case "account_statuses":
+          return [];
+        case "thread_list":
+          return threads.map((t) => ({ ...t }));
+        case "thread_messages":
+          return [message(4, { unread: threadIsUnread })];
+        case "message_body":
+          return { text: "b", html: null, blocked_images: 0, snippet: "b" };
+        default:
+          return null;
+      }
+    });
+
+    // Scenario A: unread thread → 'u' sends read=true (mark READ).
+    {
+      const { findAllByTestId } = render(<MainApp />);
+      await findAllByTestId("thread-row");
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+      // Auto-mark-on-open also sends read=true; wait for the burst, then u.
+      await waitFor(() => expect(uReads.length).toBeGreaterThan(0));
+      const n = uReads.length;
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "u", bubbles: true }));
+      await waitFor(() => expect(uReads.length).toBeGreaterThan(n));
+      expect(uReads[uReads.length - 1]).toBe(true);
+      cleanup();
+    }
+
+    // Scenario B: already-read thread → 'u' sends read=false (mark UNREAD).
+    {
+      threadIsUnread = false;
+      uReads.length = 0;
+      const { findAllByTestId } = render(<MainApp />);
+      await findAllByTestId("thread-row");
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+      // Reader cards prove the thread contents loaded (no auto-read burst
+      // here — nothing unread — so this is the only load signal).
+      await findAllByTestId("msg-card");
+      const n = uReads.length; // auto-mark fires nothing: none unread
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "u", bubbles: true }));
+      await waitFor(() => expect(uReads.length).toBeGreaterThan(n));
+      expect(uReads[uReads.length - 1]).toBe(false);
+      cleanup();
+    }
+  });
+
   it("Ctrl+2 switches to the second account's view (FR-4)", async () => {
     const calls: Record<string, unknown>[] = [];
     mockIPC((cmd, args) => {

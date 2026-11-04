@@ -176,8 +176,47 @@ pub struct MessageRow {
     pub importance: Option<String>,
 }
 
+fn map_message_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
+    let from: Option<String> = r.get(5)?;
+    let to: Option<String> = r.get(6)?;
+    Ok(MessageRow {
+        id: r.get(0)?,
+        account_id: r.get(1)?,
+        folder_id: r.get(2)?,
+        uid: r.get::<_, i64>(3)? as u32,
+        subject: r.get(4)?,
+        from: from
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default(),
+        to: to
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default(),
+        date: r.get(7)?,
+        unread: r.get::<_, i64>(8)? != 0,
+        starred: r.get::<_, i64>(9)? != 0,
+        snippet: r.get(10)?,
+        has_body: r.get::<_, i64>(11)? != 0,
+        importance: r.get(12)?,
+    })
+}
+
 /// All messages of a thread, oldest first (FR-16 reading order).
+/// `__msg-<id>` (the frontend's fallback for pre-threading search rows with
+/// a null thrid) resolves to that single message.
 pub fn thread_messages(conn: &Connection, thrid: &str) -> Result<Vec<MessageRow>, StoreError> {
+    if let Some(id) = thrid.strip_prefix("__msg-") {
+        if let Ok(id) = id.parse::<i64>() {
+            let mut stmt = conn.prepare_cached(
+                "SELECT id, account_id, folder_id, uid, subject, from_json, to_json,
+                        COALESCE(date_sent, date_recv, 0), unread, starred,
+                        COALESCE(snippet, ''), body_text IS NOT NULL OR body_html IS NOT NULL,
+                        importance
+                 FROM messages WHERE id = ?1",
+            )?;
+            let row = stmt.query_row(params![id], map_message_row).optional()?;
+            return Ok(row.into_iter().collect());
+        }
+    }
     let mut stmt = conn.prepare_cached(
         "SELECT id, account_id, folder_id, uid, subject, from_json, to_json,
                 COALESCE(date_sent, date_recv, 0), unread, starred,
@@ -186,29 +225,7 @@ pub fn thread_messages(conn: &Connection, thrid: &str) -> Result<Vec<MessageRow>
          FROM messages WHERE thrid = ?1 ORDER BY COALESCE(date_sent, date_recv, 0)",
     )?;
     let rows = stmt
-        .query_map(params![thrid], |r| {
-            let from: Option<String> = r.get(5)?;
-            let to: Option<String> = r.get(6)?;
-            Ok(MessageRow {
-                id: r.get(0)?,
-                account_id: r.get(1)?,
-                folder_id: r.get(2)?,
-                uid: r.get::<_, i64>(3)? as u32,
-                subject: r.get(4)?,
-                from: from
-                    .and_then(|j| serde_json::from_str(&j).ok())
-                    .unwrap_or_default(),
-                to: to
-                    .and_then(|j| serde_json::from_str(&j).ok())
-                    .unwrap_or_default(),
-                date: r.get(7)?,
-                unread: r.get::<_, i64>(8)? != 0,
-                starred: r.get::<_, i64>(9)? != 0,
-                snippet: r.get(10)?,
-                has_body: r.get::<_, i64>(11)? != 0,
-                importance: r.get(12)?,
-            })
-        })?
+        .query_map(params![thrid], map_message_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -630,6 +647,28 @@ mod tests {
 
         assert_eq!(delete_message_rows(store.conn(), &[msgs[0].id]).unwrap(), 1);
         assert!(thread_messages(store.conn(), "t-b").unwrap().is_empty());
+        cleanup(&dek);
+    }
+
+    #[test]
+    fn msg_fallback_resolves_single_row() {
+        let (_dir, store, _account, dek) = seed("msgfallback");
+        // A pre-threading row: thrid NULL (search rows fall back to __msg-<id>).
+        let msgs = thread_messages(store.conn(), "t-b").unwrap();
+        assert!(!msgs.is_empty());
+        let id = msgs[0].id;
+        store
+            .conn()
+            .execute("UPDATE messages SET thrid = NULL WHERE id = ?1", [id])
+            .unwrap();
+
+        let resolved = thread_messages(store.conn(), &format!("__msg-{id}")).unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].id, id);
+        assert_eq!(resolved[0].subject.as_deref(), Some("Lunch?"));
+        assert!(thread_messages(store.conn(), "__msg-notanumber")
+            .unwrap()
+            .is_empty());
         cleanup(&dek);
     }
 

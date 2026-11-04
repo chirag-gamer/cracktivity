@@ -57,12 +57,15 @@ export function MainApp() {
   );
 
   // Opening a thread marks its unread messages read — keyed on the thread
-  // identity only, so the refresh triggered by 'u' (mark unread) cannot
-  // immediately re-mark it read.
+  // identity, so the refresh triggered by 'u' (mark unread) cannot
+  // immediately re-mark it read. The latch is set only once the thread's
+  // messages have loaded (they arrive after selection), otherwise the
+  // first run with an empty list would swallow the auto-read entirely.
   const lastMarkedThrid = useRef<string | null>(null);
   useEffect(() => {
     if (!mail.selectedThrid || lastMarkedThrid.current === mail.selectedThrid)
       return;
+    if (mail.messages.length === 0) return; // wait for the thread contents
     lastMarkedThrid.current = mail.selectedThrid;
     mail.messages
       .filter((m) => m.unread)
@@ -103,10 +106,13 @@ export function MainApp() {
         }
       },
       toggleUnread: () => {
+        // Gmail-style toggle: unread thread → read; read thread → unread.
+        // (markRead(id, read=true) means READ — polarity pinned by test.)
         const anyUnread = mail.messages.some((m) => m.unread);
-        markThreadRead(!anyUnread);
-        // Keep the open-thread effect from re-marking on the next refresh.
+        markThreadRead(anyUnread);
+        // Keep the open-thread effect from re-marking on the refresh below.
         lastMarkedThrid.current = mail.selectedThrid;
+        mail.refresh();
       },
       toggleStar: () => {
         const t = newestOf(mail.selectedThrid);
