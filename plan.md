@@ -66,7 +66,7 @@ Consolidates the document inventory and the phased task list. Updated continuous
 5. Verify: **V-5.1** keyboard-only walkthrough of every FR flow (open; new keys c/r tested at L1); **V-5.2** diagnostics egress audit matches allowlist exactly (hosts list implemented; the audit comparison is open); **V-5.3** fresh-VM manual onboarding ≤ 5 min (open).
 
 ### Phase 6 — Stabilization & release — ☐ (packaging prep done: NSIS per-user + embedBootstrapper pinned in tauri.conf.json; llama fetch script added)
-   - OPEN (review round 1, P2): `bundle.resources` lists only `resources/README.txt` — the fetched `llama-server.exe` is NOT bundled, so installers have no sidecar. Adding a missing-resource entry fails every build, so the line lands with the Phase-6 key/binary ceremony: fetch script → add `"resources/llama-server.exe"` → build.
+   - OPEN (review round 1, P2): `bundle.resources` lists only `resources/README.txt` — the fetched `llama-server.exe` is NOT bundled, so installers have no sidecar. Adding a missing-resource entry fails every build, so the line lands with the Phase-6 key/binary ceremony: fetch script → add `"resources/llama-server.exe"` (+ the DLL closure it needs — b12110 splits the server into a stub exe + `llama-server-impl.dll` + ggml/libomp DLLs, ~50 MB total, D-037) → build.
 1. Performance & memory pass vs NFR-1/2 budgets; leak checks (long IDLE sessions, 24h soak).
 2. Updater end-to-end (signed artifact, latest.json, OFF-by-default check, FR-34); NSIS installer finalization; icon/branding.
 3. Code signing decision execution (Azure Artifact Signing if eligible, else OV) + SmartScreen guidance in README (D-016).

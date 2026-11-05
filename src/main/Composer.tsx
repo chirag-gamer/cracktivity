@@ -102,6 +102,7 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
   const send = async () => {
     setStatus("sending");
     setError(null);
+    savingRef.current = true;
     try {
       await saveNow();
       if (draftId.current == null) throw new Error("draft vanished");
@@ -111,6 +112,8 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
     } catch (e) {
       setStatus("failed");
       setError(String(e));
+    } finally {
+      savingRef.current = false;
     }
   };
 

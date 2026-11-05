@@ -108,7 +108,7 @@ export function SearchResults({
       {results.map((r) => (
         <button
           key={r.message_id}
-          className={`row search-row${r.has_body ? "" : " row-uncached"}`}
+          className="row search-row"
           onClick={() =>
             onOpen({
               thrid: r.thrid ?? `__msg-${r.message_id}`,

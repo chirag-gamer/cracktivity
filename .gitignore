@@ -29,3 +29,7 @@ secrets/
 # OS / editor
 Thumbs.db
 .DS_Store
+
+# fetched sidecar runtime (scripts/fetch-llama.mjs) — never committed
+src-tauri/resources/*.exe
+src-tauri/resources/*.dll
