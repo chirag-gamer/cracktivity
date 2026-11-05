@@ -20,6 +20,21 @@ const res = await fetch(URL);
 if (!res.ok) throw new Error(`download failed: ${res.status}`);
 const tmpZip = RES + `llama-${TAG}.zip`;
 await pipeline(res.body, createWriteStream(tmpZip));
-execSync(`unzip -o -j "${tmpZip}" llama-server.exe -d "${RES}"`, { stdio: "inherit" });
+try {
+  execSync(`unzip -o -j "${tmpZip}" llama-server.exe -d "${RES}"`, { stdio: "inherit" });
+} catch {
+  // Stock Windows has no unzip; PowerShell Expand-Archive extracts all and
+  // we keep only llama-server.exe.
+  const stage = RES + "llama-stage";
+  execSync(
+    `powershell -NoProfile -Command "Expand-Archive -Force '${tmpZip}' '${stage}'"`,
+    { stdio: "inherit" },
+  );
+  execSync(
+    `powershell -NoProfile -Command "Move-Item -Force '${stage}\llama-server.exe' '${RES}'"`,
+    { stdio: "inherit" },
+  );
+  await rm(stage, { recursive: true, force: true });
+}
 await rm(tmpZip, { force: true });
 console.log("llama-server.exe placed in", RES);

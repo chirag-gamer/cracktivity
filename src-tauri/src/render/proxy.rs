@@ -144,7 +144,7 @@ fn handle_request(request_line: &str) -> String {
     crate::platform::netlog::record_url(&target);
     let response = match agent
         .get(&target)
-        .header("Referer", "")
+        // No Referer header at all (an empty value would still be sent).
         .header("Accept", "image/*")
         .call()
     {

@@ -173,6 +173,9 @@ impl CracktivityMcp {
             queries::thread_messages(st.conn(), thrid).map_err(|e| err(e.to_string()))?;
         let mut out = String::new();
         for m in messages {
+            if queries::message_in_hidden_folder(st.conn(), m.id).map_err(|e| err(e.to_string()))? {
+                continue; // Spam/Trash never appear in tool output (FR-27)
+            }
             let body = queries::message_body(st.conn(), m.id)
                 .ok()
                 .flatten()
@@ -279,7 +282,13 @@ impl CracktivityMcp {
     ) -> Result<CallToolResult, McpError> {
         let st = self.store.lock().map_err(|_| err("store poisoned"))?;
         let rows = queries::search(st.conn(), &p.query, p.limit.unwrap_or(20).min(50) as i64)
-            .map_err(|e| err(e.to_string()))?;
+            .map_err(|e| err(e.to_string()))?
+            .into_iter()
+            .filter(|r| {
+                !queries::message_in_hidden_folder(st.conn(), r.message_id).unwrap_or(true)
+                // fail closed: hidden unless provably visible
+            })
+            .collect::<Vec<_>>();
         let out: Vec<serde_json::Value> = rows
             .into_iter()
             .map(|r| {
@@ -310,6 +319,9 @@ impl CracktivityMcp {
             queries::thread_messages(st.conn(), &p.thread_id).map_err(|e| err(e.to_string()))?;
         let mut out = String::new();
         for m in messages {
+            if queries::message_in_hidden_folder(st.conn(), m.id).map_err(|e| err(e.to_string()))? {
+                continue; // Spam/Trash never appear in tool output (FR-27)
+            }
             let body = queries::message_body(st.conn(), m.id)
                 .ok()
                 .flatten()

@@ -573,3 +573,8 @@ body.collapsed .panel-shell {
   gap: 10px;
   justify-content: flex-end;
 }
+
+.row-uncached {
+  opacity: 0.6;
+  font-style: italic;
+}

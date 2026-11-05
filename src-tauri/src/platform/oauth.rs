@@ -298,6 +298,7 @@ fn post_token_endpoint(form: &[(&str, String)]) -> Result<String, OAuthError> {
     if OUTLOOK_CLIENT_ID.is_empty() {
         return Err(OAuthError::ClientIdMissing);
     }
+    crate::platform::netlog::record_url(TOKEN_URL);
     let response = ureq::post(TOKEN_URL)
         .send_form(form.iter().map(|(k, v)| (*k, v.as_str())))
         .map_err(|e| OAuthError::Exchange(e.to_string()))?;

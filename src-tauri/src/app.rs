@@ -953,7 +953,9 @@ pub async fn undo_bulk_archive(
     state: State<'_, AppState>,
     undo: Vec<mail_actions::ArchivedRef>,
 ) -> CmdResult<()> {
-    for r in undo {
+    // A server without UIDPLUS reports no COPYUID (new_uid 0): there is no
+    // addressable location to restore from — skip rather than MOVE uid 0.
+    for r in undo.into_iter().filter(|r| r.new_uid > 0) {
         state
             .inner()
             .send(DriverMsg::Action(MessageAction::RestoreArchived {

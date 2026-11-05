@@ -74,6 +74,54 @@ fn seeded_store(name: &str) -> (tempfile::TempDir, Arc<Mutex<Store>>, String) {
         "code",
     )
     .unwrap();
+
+    // A Spam-folder message with matching subject — the FR-27 invariant
+    // (Spam/Trash never appear in tool output) is pinned below.
+    let junk = dao::upsert_folder(
+        conn,
+        account,
+        "Junk",
+        Some("junk"),
+        &dao::FolderUpsert {
+            uidvalidity: 1,
+            uidnext: 2,
+            highestmodseq: None,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    dao::insert_messages(
+        conn,
+        account,
+        junk.id,
+        &[dao::NewMessage {
+            uid: 1,
+            thrid: Some("t-spam".into()),
+            subject: Some("verification code inside".into()),
+            from: Some(vec![dao::Addr {
+                name: None,
+                email: "spam@example.com".into(),
+            }]),
+            importance: Some("other".into()),
+            importance_reasons: vec!["test".into()],
+            ..Default::default()
+        }],
+    )
+    .unwrap();
+    let spam_id: i64 = conn
+        .query_row("SELECT id FROM messages WHERE thrid = 't-spam'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    dao::set_body(
+        conn,
+        spam_id,
+        Some("SPAMBODY verification code 777001"),
+        None,
+        "spam",
+    )
+    .unwrap();
+
     let store = Arc::new(Mutex::new(store));
     (dir, store, target)
 }
@@ -274,6 +322,44 @@ async fn read_thread_redacts_codes_and_audits_writes() {
     assert!(
         text.contains("<untrusted_mail_body nonce="),
         "fenced: {text}"
+    );
+
+    // FR-27: the Spam message is invisible to search AND read_thread.
+    let spam_search = client
+        .peer()
+        .call_tool(call_params(
+            "search_emails",
+            Some(
+                serde_json::json!({ "query": "SPAMBODY" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        ))
+        .await
+        .unwrap();
+    let spam_text = text_of(&spam_search);
+    assert!(
+        !spam_text.contains("spam@example.com") && !spam_text.contains("t-spam"),
+        "Spam leaked through search: {spam_text}"
+    );
+    let spam_read = client
+        .peer()
+        .call_tool(call_params(
+            "read_thread",
+            Some(
+                serde_json::json!({ "thread_id": "t-spam" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        !text_of(&spam_read).contains("SPAMBODY"),
+        "Spam leaked through read_thread: {:?}",
+        text_of(&spam_read)
     );
 
     // list_recent_emails works against the seeded inbox (read-only path).

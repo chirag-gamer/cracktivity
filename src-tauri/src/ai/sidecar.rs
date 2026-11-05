@@ -31,6 +31,7 @@ pub struct Sidecar {
     pub model_path: PathBuf,
     server_exe: PathBuf,
     threads: u32,
+    ctx_size: u32,
 }
 
 impl Sidecar {
@@ -83,6 +84,7 @@ impl Sidecar {
             model_path: model_path.to_path_buf(),
             server_exe: server_exe.to_path_buf(),
             threads,
+            ctx_size,
         };
         sidecar.wait_healthy(Duration::from_secs(180))?;
         Ok(sidecar)
@@ -119,7 +121,12 @@ impl Sidecar {
     /// Restarts the server (crash recovery, spec §11).
     pub fn restart(&mut self) -> Result<(), SidecarError> {
         self.kill();
-        let fresh = Sidecar::spawn(&self.server_exe, &self.model_path, self.threads, 8192)?;
+        let fresh = Sidecar::spawn(
+            &self.server_exe,
+            &self.model_path,
+            self.threads,
+            self.ctx_size,
+        )?;
         let (port, api_key, child) = fresh.into_parts();
         self.port = port;
         self.api_key = api_key;

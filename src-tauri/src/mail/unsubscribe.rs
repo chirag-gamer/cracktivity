@@ -78,7 +78,8 @@ fn one_click_with_roots(
     }
 
     // No cookies, no auth, no redirects (RFC 8058 §3.1): `max_redirects(0)`
-    // makes a 3xx come back as an ordinary status we refuse. A caller-
+    // plus ureq's http_status_as_error default surfaces any 3xx as
+    // Error::StatusCode, mapped to Redirect below (never followed). A caller-
     // supplied TLS config (fixture tests only) replaces the default.
     let mut config = ureq::config::Config::builder().max_redirects(0);
     if let Some(tls) = tls {
@@ -91,14 +92,17 @@ fn one_click_with_roots(
         .header("Content-Type", "application/x-www-form-urlencoded")
         .send("List-Unsubscribe=One-Click")
         .map_err(|e| match e {
+            ureq::Error::StatusCode(code) if (300..400).contains(&code) => {
+                UnsubscribeError::Redirect
+            }
             ureq::Error::StatusCode(code) => UnsubscribeError::Rejected(code),
             other => UnsubscribeError::Request(other.to_string()),
         })?;
     let status = response.status().as_u16();
-    match status {
-        200..=299 => Ok(status),
-        300..=399 => Err(UnsubscribeError::Redirect),
-        _ => Err(UnsubscribeError::Rejected(status)),
+    if (200..300).contains(&status) {
+        Ok(status)
+    } else {
+        Err(UnsubscribeError::Rejected(status))
     }
 }
 

@@ -53,7 +53,6 @@ cracktivity targets Windows 10 and Windows 11. On Windows 10 a few visual touche
 ## How your mail stays private
 
 - Passwords and tokens are stored in Windows Credential Manager. Your mail cache is an encrypted local database under your own user profile.
-- Remote images in email HTML are blocked by default — all of them, so tracker pixels have nothing to load — and links are cleaned of tracking parameters before you click them. (A known-tracker list with per-sender image permissions arrives in a later build.)
 - The app keeps a network allowlist: your mail providers, plus optional things you explicitly turn on (the AI model download, app updates, a custom AI key). Nothing else. No telemetry, no analytics, no crash uploads — crash logs stay on your disk, and you can read them before you share them.
 
 ## Found a bug?

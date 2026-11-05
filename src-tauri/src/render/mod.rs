@@ -207,8 +207,9 @@ fn pixel_shaped(el: &lol_html::html_content::Element) -> bool {
         el.get_attribute(name)
             .and_then(|v| v.trim().parse::<u32>().ok())
     };
+    // Only explicit dimensions survive ammonia (data-* attributes are
+    // stripped in sanitization), so 1x1 attributes are the whole heuristic.
     matches!((dim("width"), dim("height")), (Some(1), Some(1)))
-        || (dim("width").is_none() && dim("height").is_none() && el.has_attribute("data-pixel"))
 }
 
 /// v1-compatible entry point (default policy: block all remote images).

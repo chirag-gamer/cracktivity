@@ -39,6 +39,17 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
   const bodyRef = useRef(body);
   bodyRef.current = body;
 
+  // FR-17 kill-safe drafts: every edit autosaves (debounced). The first
+  // edit creates the draft row; later edits update it. A killed app
+  // therefore loses at most the last debounce window of typing.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      saveNow().catch(() => {});
+    }, 800);
+    return () => window.clearTimeout(t);
+    // saveNow is a ref-stable closure over the current fields.
+  });
+
   // FR-22: the AI draft streams into the editable body.
   useEffect(() => {
     if (!target.threadId || target.initialBody !== undefined) return;

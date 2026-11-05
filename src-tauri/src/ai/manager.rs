@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
+use ureq::ResponseExt as _;
 
 use super::models::ModelPin;
 
@@ -97,6 +98,8 @@ fn download_to(
     let response = request
         .call()
         .map_err(|e| ModelError::Request(e.to_string()))?;
+    // HF resolve URLs redirect to a CDN host; record what was actually hit.
+    crate::platform::netlog::record(response.get_uri().host().unwrap_or(""));
     let status = response.status().as_u16();
 
     if offset > 0 && status == 200 {

@@ -265,6 +265,9 @@ pub struct SearchRow {
     pub from: Option<Addr>,
     pub date: i64,
     pub unread: bool,
+    /// False for server-search-expanded rows (headers only, FR-9 AC: the
+    /// merged list marks uncached results).
+    pub has_body: bool,
 }
 
 /// Quotes each user token as an FTS5 prefix phrase so arbitrary input can
@@ -287,7 +290,8 @@ pub fn search(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchRo
     let mut stmt = conn.prepare_cached(
         "SELECT m.id, m.thrid, m.account_id, COALESCE(m.subject, ''),
                 COALESCE(m.snippet, ''), m.from_json,
-                COALESCE(m.date_recv, m.date_sent, 0), m.unread
+                COALESCE(m.date_recv, m.date_sent, 0), m.unread,
+                m.body_text IS NOT NULL OR m.body_html IS NOT NULL
          FROM messages_fts f JOIN messages m ON m.id = f.rowid
          WHERE messages_fts MATCH ?1
          ORDER BY rank LIMIT ?2",
@@ -312,6 +316,7 @@ pub fn search(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchRo
                     }),
                 date: r.get(6)?,
                 unread: r.get::<_, i64>(7)? != 0,
+                has_body: r.get::<_, i64>(8)? != 0,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -439,6 +444,22 @@ pub fn total_unread(conn: &Connection) -> Result<i64, StoreError> {
         [],
         |r| r.get(0),
     )?)
+}
+
+/// MCP visibility gate (FR-27): Spam (`junk`) and Trash never appear in any
+/// tool output — the GUI list views are already inbox-join gated, but the
+/// search/thread helpers are cross-folder, so the MCP layer filters through
+/// this check per message.
+pub fn message_in_hidden_folder(conn: &Connection, message_id: i64) -> Result<bool, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages m
+             JOIN folders f ON f.id = m.folder_id
+             WHERE m.id = ?1 AND f.role IN ('junk','trash')",
+            params![message_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)?)
 }
 
 // ------------------------------------------------------------------ opened latch
@@ -581,15 +602,18 @@ pub fn subscription_senders(conn: &Connection) -> Result<Vec<SubscriptionRow>, S
                 SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END),
                 MAX(COALESCE(date_recv, date_sent, 0)),
                 (SELECT m2.list_unsubscribe FROM messages m2
-                 WHERE m2.account_id = m.account_id AND m2.from_json LIKE '%' || sender || '%'
+                 WHERE m2.account_id = m.account_id
+                   AND instr(lower(m2.from_json), sender) > 0
                    AND m2.list_unsubscribe IS NOT NULL
                  ORDER BY COALESCE(m2.date_recv, m2.date_sent, 0) DESC LIMIT 1),
                 (SELECT m2.list_unsub_post FROM messages m2
-                 WHERE m2.account_id = m.account_id AND m2.from_json LIKE '%' || sender || '%'
+                 WHERE m2.account_id = m.account_id
+                   AND instr(lower(m2.from_json), sender) > 0
                    AND m2.list_unsub_post IS NOT NULL
                  ORDER BY COALESCE(m2.date_recv, m2.date_sent, 0) DESC LIMIT 1),
                 m.account_id, (SELECT m3.from_json FROM messages m3
-                 WHERE m3.account_id = m.account_id AND m3.from_json LIKE '%' || sender || '%'
+                 WHERE m3.account_id = m.account_id
+                   AND instr(lower(m3.from_json), sender) > 0
                  ORDER BY COALESCE(m3.date_recv, m3.date_sent, 0) DESC LIMIT 1)
          FROM (
            SELECT m.account_id, lower(json_extract(m.from_json, '$[0].email')) AS sender,

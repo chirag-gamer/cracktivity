@@ -587,6 +587,12 @@ pub fn search(
 pub fn note_received(conn: &Connection, account_id: i64, from: &[Addr]) -> Result<(), StoreError> {
     let now = now_ms();
     for addr in from {
+        // Lowercased: sender_stats keys are matched case-sensitively by the
+        // opened-latch and allowlist upserts (P3-2 review fix).
+        let addr = Addr {
+            name: addr.name.clone(),
+            email: addr.email.to_lowercase(),
+        };
         conn.execute(
             "INSERT INTO contacts(account_id, email, name, recv_from, last_seen,
                                   created_at, updated_at)
@@ -651,6 +657,7 @@ pub fn set_classification_override(
     importance: &str,
 ) -> Result<(), StoreError> {
     let now = now_ms();
+    let sender_email = sender_email.to_lowercase();
     conn.execute(
         "INSERT INTO sender_stats(account_id, sender_email, classification_overrides,
                                   created_at, updated_at)

@@ -69,6 +69,8 @@ export interface SearchRow {
   from: Addr | null;
   date: number;
   unread: boolean;
+  /** False for server-search-expanded rows (headers only, FR-9). */
+  has_body: boolean;
 }
 
 export type ImportanceFilter = "all" | "important" | "other";

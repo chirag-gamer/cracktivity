@@ -45,7 +45,7 @@ impl ModelPin {
     /// huggingface.co + its CDN, reachable only during opt-in downloads).
     pub fn download_url(&self) -> String {
         format!(
-            "https://huggingface.co/{}/{}/{}",
+            "https://huggingface.co/{}/resolve/{}/{}",
             self.repo, self.revision, self.file
         )
     }
@@ -196,7 +196,13 @@ mod tests {
             assert_eq!(m.revision.len(), 40, "{}: full commit sha", m.file);
             assert_eq!(m.sha256.len(), 64, "{}: sha256", m.file);
             assert!(m.size_bytes > 100_000_000, "{}: plausible size", m.file);
-            assert!(m.download_url().starts_with("https://huggingface.co/"));
+            assert!(
+                m.download_url().starts_with(&format!(
+                    "https://huggingface.co/{}/resolve/{}",
+                    m.repo, m.revision
+                )),
+                "resolve form is mandatory (without it HF returns 404)"
+            );
         }
         // LOW tier gets the 1.5B (FR-23).
         assert_eq!(

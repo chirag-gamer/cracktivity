@@ -135,6 +135,7 @@ export const S = {
   storageDb: "Mail database",
   storageModels: "AI models",
   noHosts: "No remote hosts contacted this session",
+  uncached: "on server — not cached",
   onboardingAiTitle: "On-device AI",
   onboardingAiBody: S_aiBody(),
   onboardingAccept: "Enable (recommended)",

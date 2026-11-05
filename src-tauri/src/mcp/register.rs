@@ -95,9 +95,8 @@ pub fn register(client: Client, exe: &str) -> Result<PathBuf, String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     if path.exists() {
-        std::fs::copy(&path, path.with_extension("json.bak"))
-            .or_else(|_| std::fs::copy(&path, path.with_extension("toml.bak")))
-            .map_err(|e| e.to_string())?;
+        // One deterministic backup name per config file (config.bak).
+        std::fs::copy(&path, path.with_extension("bak")).map_err(|e| e.to_string())?;
     }
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let updated = match client {
