@@ -78,8 +78,9 @@ fn one_click_with_roots(
     }
 
     // No cookies, no auth, no redirects (RFC 8058 §3.1): `max_redirects(0)`
-    // plus ureq's http_status_as_error default surfaces any 3xx as
-    // Error::StatusCode, mapped to Redirect below (never followed). A caller-
+    // makes a 3xx come back as an ordinary status (ureq's status-as-error
+    // covers only 4xx/5xx — verified against run.rs), and the match below
+    // refuses it as Redirect. A caller-
     // supplied TLS config (fixture tests only) replaces the default.
     let mut config = ureq::config::Config::builder().max_redirects(0);
     if let Some(tls) = tls {
@@ -92,17 +93,14 @@ fn one_click_with_roots(
         .header("Content-Type", "application/x-www-form-urlencoded")
         .send("List-Unsubscribe=One-Click")
         .map_err(|e| match e {
-            ureq::Error::StatusCode(code) if (300..400).contains(&code) => {
-                UnsubscribeError::Redirect
-            }
             ureq::Error::StatusCode(code) => UnsubscribeError::Rejected(code),
             other => UnsubscribeError::Request(other.to_string()),
         })?;
     let status = response.status().as_u16();
-    if (200..300).contains(&status) {
-        Ok(status)
-    } else {
-        Err(UnsubscribeError::Rejected(status))
+    match status {
+        200..=299 => Ok(status),
+        300..=399 => Err(UnsubscribeError::Redirect),
+        _ => Err(UnsubscribeError::Rejected(status)),
     }
 }
 
@@ -243,9 +241,20 @@ mod tests {
         let err = one_click_with_roots(
             &format!("<https://127.0.0.1:{port2}/u>"),
             Some("List-Unsubscribe=One-Click"),
-            Some(fixture_tls),
+            Some(fixture_tls.clone()),
         )
         .unwrap_err();
         assert!(matches!(err, UnsubscribeError::Rejected(404)), "{err:?}");
+
+        // Redirect path: 302 → Redirect (RFC 8058 §3.1: never followed).
+        let (port_rx3, _req_rx3) = spawn_fixture("HTTP/1.1 302 Found");
+        let port3 = port_rx3.recv().unwrap();
+        let err = one_click_with_roots(
+            &format!("<https://127.0.0.1:{port3}/u>"),
+            Some("List-Unsubscribe=One-Click"),
+            Some(fixture_tls),
+        )
+        .unwrap_err();
+        assert!(matches!(err, UnsubscribeError::Redirect), "{err:?}");
     }
 }

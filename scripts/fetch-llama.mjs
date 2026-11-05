@@ -20,21 +20,37 @@ const res = await fetch(URL);
 if (!res.ok) throw new Error(`download failed: ${res.status}`);
 const tmpZip = RES + `llama-${TAG}.zip`;
 await pipeline(res.body, createWriteStream(tmpZip));
+const extractViaPowershell = async (zip, stage) => {
+  // Stock Windows has no unzip; Expand-Archive extracts the whole tree and
+  // we locate llama-server.exe wherever it sits (the zip may nest it).
+  await rm(stage, { recursive: true, force: true });
+  execSync(
+    `powershell -NoProfile -Command "Expand-Archive -Force '${zip}' '${stage}'"`,
+    { stdio: "inherit" },
+  );
+  const { readdir } = await import("node:fs/promises");
+  const find = async (dir) => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const p = `${dir}\${e.name}`;
+      if (e.isDirectory()) {
+        const hit = await find(p);
+        if (hit) return hit;
+      } else if (e.name === "llama-server.exe") {
+        return p;
+      }
+    }
+    return null;
+  };
+  const exe = await find(stage);
+  if (!exe) throw new Error("llama-server.exe not found in the release zip");
+  const { copyFile } = await import("node:fs/promises");
+  await copyFile(exe, RES + "llama-server.exe");
+};
+
 try {
   execSync(`unzip -o -j "${tmpZip}" llama-server.exe -d "${RES}"`, { stdio: "inherit" });
 } catch {
-  // Stock Windows has no unzip; PowerShell Expand-Archive extracts all and
-  // we keep only llama-server.exe.
-  const stage = RES + "llama-stage";
-  execSync(
-    `powershell -NoProfile -Command "Expand-Archive -Force '${tmpZip}' '${stage}'"`,
-    { stdio: "inherit" },
-  );
-  execSync(
-    `powershell -NoProfile -Command "Move-Item -Force '${stage}\llama-server.exe' '${RES}'"`,
-    { stdio: "inherit" },
-  );
-  await rm(stage, { recursive: true, force: true });
+  await extractViaPowershell(tmpZip, RES + "llama-stage");
 }
 await rm(tmpZip, { force: true });
 console.log("llama-server.exe placed in", RES);

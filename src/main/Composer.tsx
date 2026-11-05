@@ -41,10 +41,20 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
 
   // FR-17 kill-safe drafts: every edit autosaves (debounced). The first
   // edit creates the draft row; later edits update it. A killed app
-  // therefore loses at most the last debounce window of typing.
+  // therefore loses at most the last debounce window of typing. Empty
+  // drafts are never persisted (a blank compose left open must not spawn
+  // rows), and an in-flight save is never raced by a second one.
+  const savingRef = useRef(false);
   useEffect(() => {
+    if (!to.trim() && !subject.trim() && !body.trim()) return;
     const t = window.setTimeout(() => {
-      saveNow().catch(() => {});
+      if (savingRef.current) return;
+      savingRef.current = true;
+      saveNow()
+        .catch(() => {})
+        .finally(() => {
+          savingRef.current = false;
+        });
     }, 800);
     return () => window.clearTimeout(t);
     // saveNow is a ref-stable closure over the current fields.

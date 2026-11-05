@@ -108,7 +108,7 @@ export function SearchResults({
       {results.map((r) => (
         <button
           key={r.message_id}
-          className="row search-row"
+          className={`row search-row${r.has_body ? "" : " row-uncached"}`}
           onClick={() =>
             onOpen({
               thrid: r.thrid ?? `__msg-${r.message_id}`,
@@ -130,7 +130,10 @@ export function SearchResults({
             <span className="row-time">{relativeTime(r.date)}</span>
           </div>
           <div className="row-subject">{r.subject}</div>
-          <div className="row-snippet">{r.snippet}</div>
+          <div className="row-snippet">
+            {r.snippet}
+            {!r.has_body && <span className="row-uncached"> · {S.uncached}</span>}
+          </div>
         </button>
       ))}
     </div>

@@ -1382,10 +1382,18 @@ pub async fn ai_download_model(
     let ai = Arc::clone(state.inner().ai_ref());
     let channel = on_event.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let ai = ai.lock().map_err(|_| "ai poisoned")?;
-        let tier = ai.effective_tier(s.tier_override.as_deref());
-        let pin = crate::ai::models::write_model_for(tier);
-        crate::ai::manager::download(&ai.model_dir, pin, &mut |received, total| {
+        // Lock only to resolve tier + model dir; the download itself runs
+        // lock-free so ai_status / the FR-25 master switch stay responsive
+        // during the multi-minute fetch.
+        let (model_dir, pin) = {
+            let ai = ai.lock().map_err(|_| "ai poisoned")?;
+            let tier = ai.effective_tier(s.tier_override.as_deref());
+            (
+                ai.model_dir.clone(),
+                crate::ai::models::write_model_for(tier),
+            )
+        };
+        crate::ai::manager::download(&model_dir, pin, &mut |received, total| {
             let _ = channel.send(AiEvent::Notice {
                 text: format!("{} / {} bytes", received, total),
             });
