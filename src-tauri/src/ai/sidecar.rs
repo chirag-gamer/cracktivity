@@ -75,7 +75,10 @@ impl Sidecar {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| SidecarError(format!("spawn failed: {e}")))?;
+            .map_err(|e| {
+                crate::platform::applog::record("error", format!("llama-server spawn failed: {e}"));
+                SidecarError(format!("spawn failed: {e}"))
+            })?;
 
         let mut sidecar = Sidecar {
             port,
@@ -87,6 +90,7 @@ impl Sidecar {
             ctx_size,
         };
         sidecar.wait_healthy(Duration::from_secs(180))?;
+        crate::platform::applog::record("info", format!("llama-server ready on port {port}"));
         Ok(sidecar)
     }
 
@@ -97,6 +101,10 @@ impl Sidecar {
         loop {
             if let Some(child) = self.child.as_mut() {
                 if matches!(child.try_wait(), Ok(Some(_))) {
+                    crate::platform::applog::record(
+                        "error",
+                        "llama-server exited during startup (model file invalid?)",
+                    );
                     return Err(SidecarError(
                         "llama-server exited during startup (model file invalid?)".into(),
                     ));

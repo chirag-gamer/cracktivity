@@ -9,6 +9,18 @@ body,
   margin: 0;
 }
 
+/* Theme surface outside the FluentProvider (D-040): the document paints the
+   provider's colorNeutralBackground1 per data-theme, set before first paint
+   by the index.html script — no white flash on dark launches, and the
+   background follows the theme instantly on switch. */
+html[data-theme="dark"] {
+  background: #292929; /* teamsDarkTheme colorNeutralBackground1 */
+}
+
+html[data-theme="light"] {
+  background: #ffffff; /* teamsLightTheme colorNeutralBackground1 */
+}
+
 .provider-root {
   height: 100%;
 }

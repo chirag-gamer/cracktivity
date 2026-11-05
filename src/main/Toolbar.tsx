@@ -103,7 +103,7 @@ export function SearchResults({
   onOpen: (t: ThreadRow) => void;
 }) {
   return (
-    <div className="pane-list" data-testid="search-results">
+    <div className="pane-list" role="listbox" aria-label={S.search} data-testid="search-results">
       {results.length === 0 && <div className="empty">{S.noMatches}</div>}
       {results.map((r) => (
         <button

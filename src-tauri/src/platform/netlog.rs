@@ -7,6 +7,44 @@ use std::sync::Mutex;
 
 static HOSTS: Mutex<Option<BTreeSet<String>>> = Mutex::new(None);
 
+// App-owned egress hosts (FR-32/D-015 evidence): the only hosts the app can
+// contact on its own initiative. User-content-driven egress (remote images
+// from mail HTML, List-Unsubscribe POSTs, user-entered IMAP/SMTP hosts) is
+// deliberately outside this inventory — the Diagnostics panel lists exactly
+// what a session hit, which is the audit surface.
+
+pub const HOST_MS_OAUTH: &str = "login.microsoftonline.com";
+pub const HOST_HUGGINGFACE: &str = "huggingface.co";
+pub const HOST_OPENAI: &str = "api.openai.com";
+pub const HOST_XAI: &str = "api.x.ai";
+pub const HOST_ANTHROPIC: &str = "api.anthropic.com";
+/// llama-server + the loopback image fetch proxy.
+pub const HOST_LOOPBACK: &str = "127.0.0.1";
+
+/// Every host the app contacts by its own code paths (no user content, no
+/// user configuration). The V-5.2 audit test pins this set against the
+/// provider presets and the AI/OAuth endpoint constants.
+pub const STATIC_EGRESS_HOSTS: &[&str] = &[
+    HOST_MS_OAUTH,
+    HOST_HUGGINGFACE,
+    HOST_OPENAI,
+    HOST_XAI,
+    HOST_ANTHROPIC,
+    HOST_LOOPBACK,
+    // Provider preset servers (kept in sync with providers::ALL by the audit
+    // test; GENERIC is user-configured and intentionally absent).
+    "imap.gmail.com",
+    "smtp.gmail.com",
+    "imap.mail.me.com",
+    "smtp.mail.me.com",
+    "imap.zoho.com",
+    "smtp.zoho.com",
+    "imap.mail.yahoo.com",
+    "smtp.mail.yahoo.com",
+    "outlook.office365.com",
+    "smtp-mail.outlook.com",
+];
+
 /// Records one contacted host (hostname only — no paths, no queries).
 pub fn record(host: &str) {
     if host.is_empty() {
@@ -53,5 +91,44 @@ mod tests {
             "dedup: {hosts:?}"
         );
         assert!(!hosts.iter().any(|h| h.contains("resolve")), "host only");
+    }
+
+    /// V-5.2: the static inventory must exactly cover every egress host the
+    /// app's own code paths can reach — OAuth endpoints, the pinned model
+    /// download host, the BYO AI engines, loopback, and every provider
+    /// preset's IMAP/SMTP servers. User-content and user-configured hosts
+    /// are excluded by design (D-044).
+    #[test]
+    fn static_inventory_covers_all_runtime_egress() {
+        let mut expected: BTreeSet<String> = STATIC_EGRESS_HOSTS
+            .iter()
+            .map(|h| h.to_lowercase())
+            .collect();
+
+        // Provider presets: every IMAP/SMTP host must be in the inventory.
+        // GENERIC is skipped — its hosts are user-supplied at add time.
+        for p in crate::platform::providers::ALL.iter() {
+            if p.imap_host.is_empty() {
+                continue;
+            }
+            expected.insert(p.imap_host.to_lowercase());
+            expected.insert(p.smtp_host.to_lowercase());
+        }
+
+        let inventory: BTreeSet<String> = STATIC_EGRESS_HOSTS
+            .iter()
+            .map(|h| h.to_lowercase())
+            .collect();
+
+        let missing: Vec<&String> = expected.difference(&inventory).collect();
+        assert!(
+            missing.is_empty(),
+            "runtime egress hosts missing from the audit inventory: {missing:?}"
+        );
+        let extra: Vec<&String> = inventory.difference(&expected).collect();
+        assert!(
+            extra.is_empty(),
+            "inventory lists hosts no code path contacts: {extra:?}"
+        );
     }
 }

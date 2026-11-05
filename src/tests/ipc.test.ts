@@ -77,4 +77,17 @@ describe("ipc client", () => {
       smtpPort: null,
     });
   });
+
+  it("phase-5 appearance/diagnostics commands map to their Rust commands", async () => {
+    const handler = vi.fn(() => null);
+    mockIPC(handler);
+    await ipc.setPanelHotkey("ctrl+alt+m");
+    await ipc.diagnosticsLogs();
+    await ipc.clearDiagnosticsLogs();
+    await ipc.pruneCache();
+    expect(handler).toHaveBeenNthCalledWith(1, "set_panel_hotkey", { hotkey: "ctrl+alt+m" });
+    expect(handler).toHaveBeenNthCalledWith(2, "diagnostics_logs", {});
+    expect(handler).toHaveBeenNthCalledWith(3, "diagnostics_clear_logs", {});
+    expect(handler).toHaveBeenNthCalledWith(4, "prune_cache", {});
+  });
 });

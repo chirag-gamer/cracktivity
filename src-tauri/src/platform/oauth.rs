@@ -381,6 +381,10 @@ mod tests {
         let parsed = Url::parse(&url).unwrap();
         assert_eq!(parsed.domain(), Some("login.microsoftonline.com"));
         assert!(parsed.path().contains("/consumers/oauth2/v2.0/authorize"));
+        // V-5.2 audit pin: the contacted host stays tied to the egress
+        // inventory (netlog::STATIC_EGRESS_HOSTS).
+        assert!(AUTHORIZE_URL.contains(crate::platform::netlog::HOST_MS_OAUTH));
+        assert!(TOKEN_URL.contains(crate::platform::netlog::HOST_MS_OAUTH));
         let query: BTreeMap<_, _> = parsed.query_pairs().collect();
         assert_eq!(query.get("response_type").unwrap(), "code");
         assert_eq!(query.get("redirect_uri").unwrap(), "http://127.0.0.1/52341");

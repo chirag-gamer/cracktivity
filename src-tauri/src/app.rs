@@ -542,6 +542,12 @@ pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) {
                 } else {
                     *failures.entry(acc.id).and_modify(|a| *a += 1).or_insert(1)
                 };
+                if !ok {
+                    crate::platform::applog::record(
+                        "error",
+                        format!("sync failed for account {} (attempt {attempt})", acc.id),
+                    );
+                }
                 let delay = if attempt == 0 {
                     POLL_INTERVAL
                 } else {
@@ -1223,7 +1229,10 @@ pub async fn send_draft(state: State<'_, AppState>, draft_id: i64) -> CmdResult<
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| {
+        crate::platform::applog::record("error", format!("draft {draft_id} send failed: {e}"));
+        e
+    })
 }
 
 /// Opens the OS mail composer for a mailto: unsubscribe fallback (FR-14).
@@ -1264,7 +1273,7 @@ pub async fn set_setting(
 }
 
 /// Keys the UI may write (allowlist: no secrets ever live in `settings`).
-const SETTINGS_KEYS: [&str; 14] = [
+const SETTINGS_KEYS: [&str; 15] = [
     "ai.enabled",
     "ai.tier_override",
     "ai.engine",
@@ -1278,8 +1287,43 @@ const SETTINGS_KEYS: [&str; 14] = [
     "privacy.blocklist_updates",
     "onboarding.completed",
     "appearance.keymap",
+    "appearance.theme",
     "panel.hotkey",
 ];
+
+/// Sets the panel hotkey (FR-28 configurability): validates, swaps the
+/// registration live, then persists. An empty value resets to the default.
+#[tauri::command]
+pub async fn set_panel_hotkey(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    hotkey: String,
+) -> CmdResult<()> {
+    let wanted = if hotkey.trim().is_empty() {
+        None
+    } else {
+        Some(hotkey.trim())
+    };
+    // Validate before touching the live registration.
+    crate::platform::shell::validate_hotkey(
+        wanted.unwrap_or(crate::platform::shell::DEFAULT_HOTKEY),
+    )?;
+    let old = get_setting_value(&state, "panel.hotkey")
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_else(|| crate::platform::shell::DEFAULT_HOTKEY.to_string());
+    crate::platform::shell::unregister_hotkey(&app, &old);
+    if let Err(e) = crate::platform::shell::register_hotkey(&app, wanted) {
+        // Restore the previous hotkey so the panel is never left dead.
+        let _ = crate::platform::shell::register_hotkey(&app, Some(&old));
+        return Err(e);
+    }
+    set_setting_value(
+        &state,
+        "panel.hotkey",
+        &serde_json::json!(wanted.unwrap_or(crate::platform::shell::DEFAULT_HOTKEY)),
+    )?;
+    Ok(())
+}
 
 // ----------------------------------------------------------------------- AI
 
@@ -1687,6 +1731,50 @@ pub async fn storage_usage(state: State<'_, AppState>) -> CmdResult<StorageUsage
         db_bytes: db,
         models_bytes: models,
     })
+}
+
+/// One log-buffer row for the Diagnostics viewer (Phase 5, D-042).
+#[derive(serde::Serialize)]
+pub struct LogLine {
+    pub ts: u64,
+    pub level: &'static str,
+    pub msg: String,
+}
+
+/// The in-app log ring buffer, oldest first (in-memory only, D-042).
+#[tauri::command]
+pub async fn diagnostics_logs() -> CmdResult<Vec<LogLine>> {
+    Ok(crate::platform::applog::tail()
+        .into_iter()
+        .map(|(ts, level, msg)| LogLine { ts, level, msg })
+        .collect())
+}
+
+/// Clears the in-app log buffer (user action from the Diagnostics viewer).
+#[tauri::command]
+pub async fn diagnostics_clear_logs() -> CmdResult<()> {
+    crate::platform::applog::clear();
+    Ok(())
+}
+
+/// Cache prune (Phase 5): deletes partial model downloads (`.part` — the
+/// resumable prefixes of interrupted downloads, spec §11). Returns bytes
+/// reclaimed. The encrypted mail DB is the offline cache and is never
+/// pruned from the UI (D-043).
+#[tauri::command]
+pub async fn prune_cache(state: State<'_, AppState>) -> CmdResult<u64> {
+    let dir = {
+        let ai = state.inner().ai.lock().map_err(|_| "ai poisoned")?;
+        ai.model_dir.clone()
+    };
+    let freed = crate::ai::manager::prune_partials(&dir);
+    if freed > 0 {
+        crate::platform::applog::record(
+            "info",
+            format!("pruned {freed} bytes of partial downloads"),
+        );
+    }
+    Ok(freed)
 }
 
 /// Esc handler in the panel webview (FR-28).

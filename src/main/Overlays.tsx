@@ -10,8 +10,24 @@ import {
   Input,
 } from "@fluentui/react-components";
 import { S } from "../shared/strings";
+import { shortcutRows, type KeymapScheme } from "./keymap";
 
-export function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ShortcutsOverlay({
+  open,
+  onClose,
+  scheme = "cracktivity",
+}: {
+  open: boolean;
+  onClose: () => void;
+  scheme?: KeymapScheme;
+}) {
+  const rows: [string, string][] = [
+    ...shortcutRows(scheme),
+    ["Ctrl+K", S.shortcutPalette],
+    ["Ctrl+1..9", S.shortcutAccounts],
+    ["Esc", S.shortcutEsc],
+    ["?", S.shortcutSelf],
+  ];
   return (
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface>
@@ -20,7 +36,7 @@ export function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: ()
           <DialogContent>
             <table className="shortcut-table" data-testid="shortcuts-overlay">
               <tbody>
-                {S.shortcuts.map(([k, v]) => (
+                {rows.map(([k, v]) => (
                   <tr key={k}>
                     <td className="key">{k}</td>
                     <td>{v}</td>

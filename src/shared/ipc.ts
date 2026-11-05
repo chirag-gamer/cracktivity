@@ -14,6 +14,7 @@ import type {
   DraftRow,
   FollowupRow,
   ImportanceFilter,
+  LogLine,
   MessageRow,
   OpenedBody,
   SearchRow,
@@ -174,4 +175,11 @@ export const ipc = {
   diagnosticsHosts: () => invoke<string[]>("diagnostics_hosts"),
   storageUsage: () =>
     invoke<{ db_bytes: number; models_bytes: number }>("storage_usage"),
+
+  // -- Phase 5: appearance + diagnostics
+  setPanelHotkey: (hotkey: string) =>
+    invoke<void>("set_panel_hotkey", { hotkey }),
+  diagnosticsLogs: () => invoke<LogLine[]>("diagnostics_logs"),
+  clearDiagnosticsLogs: () => invoke<void>("diagnostics_clear_logs"),
+  pruneCache: () => invoke<number>("prune_cache"),
 };

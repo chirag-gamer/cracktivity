@@ -43,7 +43,13 @@ export function OnboardingDialog({ open, onFinish, onAddAccount }: OnboardingPro
   };
 
   return (
-    <div className="overlay" role="dialog" aria-modal data-testid="onboarding">
+    <div
+      className="overlay"
+      role="dialog"
+      aria-modal
+      aria-label={S.onboardingAiTitle}
+      data-testid="onboarding"
+    >
       <div className="overlay-card">
         <h2>{S.onboardingAiTitle}</h2>
         <Text>{S.onboardingAiBody}</Text>

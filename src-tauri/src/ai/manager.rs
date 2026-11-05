@@ -50,13 +50,29 @@ pub fn download(
     let dir = models_dir(base);
     std::fs::create_dir_all(&dir)?;
     let path = model_path(base, pin);
-    download_to(
+    crate::platform::applog::record(
+        "info",
+        format!(
+            "model download started: {} ({} MB)",
+            pin.file,
+            pin.size_bytes / 1_000_000
+        ),
+    );
+    let result = download_to(
         &pin.download_url(),
         &path,
         pin.size_bytes,
         pin.sha256,
         progress,
-    )
+    );
+    match &result {
+        Ok(_) => crate::platform::applog::record(
+            "info",
+            format!("model download completed: {}", pin.file),
+        ),
+        Err(e) => crate::platform::applog::record("error", format!("model download failed: {e}")),
+    }
+    result
 }
 
 /// The wire seam: one pinned-URL download into `path` (a `.part` suffix is
@@ -204,6 +220,26 @@ pub fn disk_usage(base: &Path) -> u64 {
         .sum()
 }
 
+/// Cache prune (Phase 5): deletes interrupted-download `.part` files from
+/// the models dir; returns bytes reclaimed. Verified model files stay.
+pub fn prune_partials(base: &Path) -> u64 {
+    let dir = models_dir(base);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut freed = 0u64;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("part") {
+            if let Ok(meta) = entry.metadata() {
+                freed += meta.len();
+            }
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    freed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +383,26 @@ mod tests {
         assert!(matches!(err, ModelError::Checksum { .. }), "{err:?}");
         assert!(!path.exists());
         assert!(!path.with_extension("gguf.part").exists());
+    }
+
+    /// Phase 5 cache prune: `.part` files go, verified model files stay.
+    /// Like the other manager fns, `prune_partials` takes the data dir and
+    /// looks inside `models/`.
+    #[test]
+    fn prune_partials_deletes_only_part_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let models = dir.path().join("models");
+        std::fs::create_dir_all(&models).unwrap();
+        let (body, _) = fake_gguf();
+        std::fs::write(models.join("model.gguf"), &body).unwrap();
+        std::fs::write(models.join("interrupted.gguf.part"), &body).unwrap();
+        std::fs::write(models.join("other.bin"), b"x").unwrap();
+        let freed = prune_partials(dir.path());
+        assert_eq!(freed, body.len() as u64);
+        assert!(models.join("model.gguf").exists(), "verified model stays");
+        assert!(models.join("other.bin").exists(), "unrelated files stay");
+        assert!(!models.join("interrupted.gguf.part").exists());
+        // Second run is a no-op.
+        assert_eq!(prune_partials(dir.path()), 0);
     }
 }

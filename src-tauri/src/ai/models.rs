@@ -156,6 +156,15 @@ pub fn tier_for(hw: &Hardware) -> Tier {
 mod tests {
     use super::*;
 
+    /// V-5.2 audit pin: the pinned download URL stays on the inventoried host.
+    #[test]
+    fn download_url_stays_on_the_inventored_host() {
+        assert!(MODELS[0].download_url().starts_with(&format!(
+            "https://{}/",
+            crate::platform::netlog::HOST_HUGGINGFACE
+        )));
+    }
+
     #[test]
     fn tier_boundaries_match_d004() {
         let low = tier_for(&Hardware {

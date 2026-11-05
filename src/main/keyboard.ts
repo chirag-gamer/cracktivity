@@ -7,6 +7,7 @@
  * and Ctrl-combos always pass through.
  */
 import { useEffect, useRef } from "react";
+import { keyActionFor, type KeymapScheme } from "./keymap";
 
 export interface KeyboardActions {
   move: (delta: number) => void;
@@ -33,7 +34,11 @@ function isTypingTarget(t: EventTarget | null): boolean {
   );
 }
 
-export function useKeyboard(actions: KeyboardActions, enabled = true): void {
+export function useKeyboard(
+  actions: KeyboardActions,
+  enabled = true,
+  scheme: KeymapScheme = "cracktivity",
+): void {
   const ref = useRef(actions);
   ref.current = actions;
 
@@ -75,39 +80,22 @@ export function useKeyboard(actions: KeyboardActions, enabled = true): void {
           e.preventDefault();
           a.open();
           break;
-        case "e":
-          e.preventDefault();
-          a.archive();
-          break;
-        case "u":
-          e.preventDefault();
-          a.toggleUnread();
-          break;
-        case "s":
-          e.preventDefault();
-          a.toggleStar();
-          break;
-        case "c":
-          e.preventDefault();
-          a.compose();
-          break;
-        case "r":
-          e.preventDefault();
-          a.reply();
-          break;
-        case "/":
-          e.preventDefault();
-          a.focusSearch();
-          break;
         case "?":
           e.preventDefault();
           a.toggleOverlay();
           break;
-        default:
+        default: {
+          // Scheme-dependent action keys (FR-30 AC: selectable keymap).
+          const action = keyActionFor(scheme, e.key);
+          if (action) {
+            e.preventDefault();
+            a[action]();
+          }
           break;
+        }
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [enabled]);
+  }, [enabled, scheme]);
 }

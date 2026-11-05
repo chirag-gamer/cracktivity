@@ -282,3 +282,45 @@ Rules: this file is append-only. Never edit or delete past entries. To change a 
 - **Context:** Round-4 verifier re-audited fee5aa0: all three round-3 fixes VERIFIED (fetch script logic read end-to-end and its placed output confirmed on disk; send/autosave guard composes; marker opacity corrected), decisions.md append-only respected (content-only additions across all rounds), the .gitignore rules keep the fetched runtime untracked.
 - **Verdict:** CONVERGED-CLEAN. Residual LOW/informational notes, deliberately deferred: stale-DLL pruning on a future tag bump and llama.cpp nightly-asset retention (both Phase-6 pin-management concerns); a sub-ms reverse-race window in Composer (pre-existing, negligible); fixes 1-3 carry no dedicated tests (the script's verification was executional — the stronger evidence class for a fetch script).
 - **Consequence:** The review loop requested by the owner (2 reviewers, then 1 verifier, looping until no issues) has terminated cleanly. Documented OPEN items (V-4.5 golden-file + latency, V-4.7 real-client MCP check, V-5.1-5.3, Phase-6 QA matrix/signing) are unchanged and tracked in plan.md.
+
+## D-039 — 2026-11-06 — Preference persistence pair: settings DB canonical + localStorage mirror — accepted
+
+- **Context:** Phase 5 needs user-selectable theme and keymap. The settings store (SQLite, allowlisted keys) is the canonical place, but it is async and unreachable before first render — a dark-mode launch would flash white while awaiting `get_settings`.
+- **Decision:** Each preference (`appearance.theme`, `appearance.keymap`, `panel.hotkey`) lives in the settings DB (canonical, shared across windows) and is mirrored into localStorage (`cracktivity.theme`, `cracktivity.keymap` — plain local storage, no secrets). An inline synchronous script in `index.html` applies the mirror before first paint; the React provider seeds its initial state from the same mirror and adopts the DB value on mount when it differs (`src/shared/prefs.ts`). Writes go to both (DB failure non-fatal).
+- **Consequences:** Theme/keymap apply with no flash in both windows; divergence converges on next mount. localStorage holds only UI preferences (no secrets — §2.2 discipline intact).
+
+## D-040 — 2026-11-06 — No-flash theme strategy: visible:false + Rust background_color + pre-paint script; live-switch via CSS variables — accepted
+
+- **Context:** FR-29/NFR: instant light/dark switching without white flashes. Research (Fluent #35614, Tauri #1564/#5170, wry 0.52+) established: (a) `FluentProvider` theme swaps are instant CSS-variable changes; (b) the flash sources are the WebView2 pre-navigation surface and the html/body area outside the provider; (c) `prefers-color-scheme` does not always update live on Windows/WebView2, so Tauri's `tauri://theme-changed` must be listened to as well.
+- **Decision:** Four layers: (1) main window starts `"visible": false` in tauri.conf.json; (2) setup reads the persisted `appearance.theme` (or the OS theme via `window.theme()`) and calls `set_background_color` with the matching teamsLight/teamsDark `colorNeutralBackground1` before `show()`; (3) the index.html pre-paint script sets `data-theme` + `color-scheme` on `<html>`, and global.css paints `html` background per `data-theme`; (4) the provider listens to both `matchMedia` change and Tauri's theme-changed event for system mode.
+- **Consequences:** No white flash on launch or theme switch; WebView2's known pre-render flash (#1564) is covered by the background color rather than the deferred visible→show-after-load pattern (Phase-6 polish if QA shows a gap). The theme hot path never uses CSS transitions on theme colors.
+
+## D-041 — 2026-11-06 — OS text scaling + screen-reader support are automatic; work is semantic ARIA only — accepted
+
+- **Context:** NFR-4 (OS text scaling) and screen-reader compliance. Research verified: tao sets PerMonitorV2 DPI awareness at startup, so WebView2 applies the Windows "Make text bigger" scaling automatically (WebView2Feedback #1662/#3699 — no API exists or is needed); WebView2 exposes the DOM through Chromium's accessibility tree with NVDA/Narrator support out of the box (WebView2Feedback #2330 fixed in WinAppSDK 1.5/1.6).
+- **Decision:** No scaling infrastructure is added. The accessibility pass fixes semantics only: label↔control association (settings selects), `aria-label` on the onboarding dialog and the star toggle, `role="log"` + `aria-label` on the diagnostics log viewer, `role="listbox"` on search results. Text containers already use flexible layouts (no fixed px heights on text).
+- **Consequences:** Scaling/screen-reader verification is manual QA (recorded as open V-5 items; OS text scaling live test pending). Fluent v9 remains px-based by design (fluentui #30532/#33488) — browser zoom is the scaling story beyond OS text scaling.
+
+## D-042 — 2026-11-06 — Diagnostics log: in-memory ring buffer, never a file — accepted
+
+- **Context:** Phase 5 calls for a "log viewer". No logging crate exists and none is added (simplicity gate; `tauri-plugin-log` would pull file I/O for marginal value).
+- **Decision:** `platform::applog` — a 500-entry in-memory ring buffer `(unix_ms, "info"|"error", msg)`, wired at real failure surfaces: model download start/complete/failure, llama-server spawn failure/ready/startup-exit, draft send failure, per-account sync failures. Exposed via `diagnostics_logs` / `diagnostics_clear_logs`; the viewer renders with `role="log"` and polls every 3 s while Settings is open.
+- **Consequences:** Logs vanish on restart by design (the session host list has the same lifetime). Nothing new is ever written to disk — no metadata-leak surface (FR-32/D-015 posture).
+
+## D-043 — 2026-11-06 — Cache prune scope: partial model downloads only; the mail DB is never UI-prunable — accepted
+
+- **Context:** "Storage usage + cache prune controls" (Phase 5). The only true cache artifacts on disk are interrupted-download `.part` files (resumable prefixes, spec §11). The encrypted mail DB is the offline cache itself — pruning it would break offline read/search (FR-8).
+- **Decision:** `prune_cache` deletes `*.part` files from the models dir and reports bytes reclaimed; the Settings button shows the result. No bulk DB pruning in v1.0 (audit-log retention, if needed later, gets its own decision).
+- **Consequences:** Verified model files are unaffected; model deletion stays the existing dedicated control.
+
+## D-044 — 2026-11-06 — Egress audit (V-5.2): static inventory const pinned by tests, user-content egress excluded by design — accepted
+
+- **Context:** V-5.2 requires the diagnostics egress audit to "match the allowlist exactly". Egress has two classes: app-initiated (OAuth, pinned model host, BYO engines, loopback, provider preset servers — static, enumerable) and user-content/user-config driven (remote images from mail HTML, List-Unsubscribe POSTs, user-entered IMAP/SMTP hosts — inherently variable).
+- **Decision:** `netlog::STATIC_EGRESS_HOSTS` is the canonical static inventory; each egress site pins its host to an inventory const (oauth/chat/models via tests asserting the URLs contain the inventory hosts; the audit test proves exact set equality with the provider presets from `providers::ALL`). User-content hosts are deliberately outside the inventory — the Diagnostics panel is their audit surface (that is the FR-32 evidence, not a violation).
+- **Consequences:** Adding a new app-owned host without updating the inventory fails the audit test; dynamic HF CDN redirect hosts remain runtime-recorded only (by design).
+## D-045 — 2026-11-06 — Panel hotkey configurability (FR-28) with Ctrl/Alt/Win floor; Shift+Space alone rejected (IME) — accepted
+
+- **Context:** FR-28 says the global hotkey is configurable; research documented that bare Shift+Space toggles full-width input on East-Asian IMEs and Ctrl+Space collides with some IME switches.
+- **Decision:** `panel.hotkey` (already allowlisted) is read at startup and registered via the global-shortcut plugin (no fixed `with_shortcuts` anymore). `set_panel_hotkey` validates first, unregisters the old spec, registers the new one (restoring the old on failure so the panel is never left dead), then persists. Validation requires a non-modifier key plus at least one of Ctrl/Alt/Meta/Super/Win; an empty value resets to `Ctrl+Shift+Space`; an invalid saved spec falls back to the default at startup. The IME rule is stated in the UI note.
+- **Consequences:** The shipped default is unchanged; single-letter global hotkeys are impossible (safe against text-input collisions system-wide).
+

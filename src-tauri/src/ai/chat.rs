@@ -14,6 +14,10 @@ fn log_host(base_or_url: &str) {
     crate::platform::netlog::record_url(base_or_url);
 }
 
+/// Anthropic native endpoint (V-5.2 audit pin: host is in the netlog
+/// inventory; the test asserts it).
+const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+
 #[derive(Debug, Clone)]
 pub struct Msg {
     /// "system" | "user" | "assistant"
@@ -248,9 +252,9 @@ impl ChatEngine for Anthropic {
             .timeout_global(Some(std::time::Duration::from_secs(300)))
             .build();
         let agent = ureq::Agent::new_with_config(config);
-        log_host("https://api.anthropic.com/v1/messages");
+        log_host(ANTHROPIC_URL);
         let response = agent
-            .post("https://api.anthropic.com/v1/messages")
+            .post(ANTHROPIC_URL)
             .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", self.version)
             .header("Content-Type", "application/json")
@@ -297,6 +301,18 @@ pub fn parse_anthropic_sse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// V-5.2 audit pin: BYO engine endpoints stay on the inventoried hosts.
+    #[test]
+    fn byo_endpoints_stay_on_inventored_hosts() {
+        let openai = OpenAiCompat::openai("k", "m");
+        assert!(openai
+            .base_url
+            .contains(crate::platform::netlog::HOST_OPENAI));
+        let xai = OpenAiCompat::xai("k", "m");
+        assert!(xai.base_url.contains(crate::platform::netlog::HOST_XAI));
+        assert!(ANTHROPIC_URL.contains(crate::platform::netlog::HOST_ANTHROPIC));
+    }
 
     /// L7 wire-contract: OpenAI chunk shape, delta extraction, [DONE] end.
     #[test]

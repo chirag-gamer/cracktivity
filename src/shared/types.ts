@@ -145,3 +145,10 @@ export interface AiStatus {
 
 /** Audit tail row: id, at, actor, action, detail json. */
 export type AuditRow = [number, number, string, string, string];
+
+/** Diagnostics log-buffer row (Phase 5): in-memory only, oldest first. */
+export interface LogLine {
+  ts: number;
+  level: "info" | "error";
+  msg: string;
+}

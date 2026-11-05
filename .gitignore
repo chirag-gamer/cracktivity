@@ -33,3 +33,7 @@ Thumbs.db
 # fetched sidecar runtime (scripts/fetch-llama.mjs) — never committed
 src-tauri/resources/*.exe
 src-tauri/resources/*.dll
+
+# local build tooling (portable perl for openssl build) — never committed
+tools/
+e2e/downloads/

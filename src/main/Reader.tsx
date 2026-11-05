@@ -123,6 +123,7 @@ function MessageCard({
           <button
             className="link-button"
             title={S.toggleStarTitle}
+            aria-label={S.toggleStarTitle}
             onClick={() => ipc.setStarred(m.id, !m.starred).catch(() => {})}
           >
             {m.starred ? S.star : S.unstar}

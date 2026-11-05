@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import React from "react";
 import { useKeyboard, type KeyboardActions } from "../main/keyboard";
+import { keyActionFor, type KeymapScheme } from "../main/keymap";
 
 function makeActions() {
   const fns = {
@@ -20,10 +21,10 @@ function makeActions() {
   return { fns, actions: fns as unknown as KeyboardActions };
 }
 
-function mount(actions: KeyboardActions, enabled = true) {
+function mount(actions: KeyboardActions, enabled = true, scheme?: KeymapScheme) {
   render(
     React.createElement(() => {
-      useKeyboard(actions, enabled);
+      useKeyboard(actions, enabled, scheme);
       return React.createElement("input", { "aria-label": "entry" });
     }),
   );
@@ -103,5 +104,29 @@ describe("useKeyboard", () => {
     mount(actions, false);
     press("j");
     expect(fns.move).not.toHaveBeenCalled();
+  });
+
+  // FR-30 AC (Phase 5): the Gmail-style scheme aliases y → archive; the
+  // cracktivity scheme leaves y unbound.
+  it("gmail-style scheme aliases y to archive; cracktivity leaves y unbound", () => {
+    expect(keyActionFor("gmail", "y")).toBe("archive");
+    expect(keyActionFor("cracktivity", "y")).toBeUndefined();
+    expect(keyActionFor("gmail", "e")).toBe("archive");
+
+    const { fns, actions } = makeActions();
+    mount(actions, true, "gmail" as KeymapScheme);
+    press("y");
+    expect(fns.archive).toHaveBeenCalledTimes(1);
+    press("e");
+    expect(fns.archive).toHaveBeenCalledTimes(2);
+  });
+
+  it("scheme keys stay suppressed while typing", () => {
+    const { fns, actions } = makeActions();
+    mount(actions, true, "gmail" as KeymapScheme);
+    const input = document.querySelector("input")!;
+    input.focus();
+    press("y", undefined, input);
+    expect(fns.archive).not.toHaveBeenCalled();
   });
 });

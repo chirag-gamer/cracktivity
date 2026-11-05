@@ -1,13 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
-import { SystemThemeProvider } from "./shared/theme";
+import { ThemeProvider } from "./shared/theme";
 import "./global.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <SystemThemeProvider>
+    <ThemeProvider>
       <App />
-    </SystemThemeProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 );

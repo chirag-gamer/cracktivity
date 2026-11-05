@@ -191,6 +191,72 @@ pub fn open_url(_app: &AppHandle, _url: &str) -> Result<(), String> {
     Err("unsupported platform".into())
 }
 
+/// Default global panel hotkey (FR-28).
+pub const DEFAULT_HOTKEY: &str = "ctrl+shift+space";
+
+/// Validates a global-hotkey spec (FR-28 configurability). Requires a
+/// non-modifier key plus Ctrl/Alt/Win — bare Shift+Space is rejected because
+/// it toggles full-width input on East-Asian IMEs (D-045).
+pub fn validate_hotkey(spec: &str) -> Result<(), String> {
+    let parts: Vec<&str> = spec
+        .split('+')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.len() < 2 {
+        return Err("hotkey needs a modifier and a key (e.g. Ctrl+Shift+Space)".into());
+    }
+    if parts.len() > 4 {
+        return Err("hotkey has too many parts".into());
+    }
+    let (mods, key) = parts.split_at(parts.len() - 1);
+    let key = key[0].to_lowercase();
+    if ["ctrl", "alt", "shift", "meta", "super", "cmd", "win"].contains(&key.as_str()) {
+        return Err("hotkey must end in a non-modifier key".into());
+    }
+    let has_base = mods.iter().any(|m| {
+        matches!(
+            m.to_lowercase().as_str(),
+            "ctrl" | "alt" | "meta" | "super" | "win" | "cmd"
+        )
+    });
+    if !has_base {
+        return Err(
+            "hotkey must include Ctrl, Alt or the Windows key — Shift+Space alone conflicts with East-Asian IMEs (full-width toggle)".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Registers the panel hotkey (FR-28). `spec` None/empty → the default.
+/// Returns the effective spec on success.
+pub fn register_hotkey(app: &AppHandle, spec: Option<&str>) -> Result<String, String> {
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
+    let wanted = match spec {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => DEFAULT_HOTKEY.to_string(),
+    };
+    validate_hotkey(&wanted)?;
+    let shortcut =
+        Shortcut::from_str(&wanted).map_err(|e| format!("invalid hotkey {wanted:?}: {e}"))?;
+    app.global_shortcut()
+        .register(shortcut)
+        .map_err(|e| format!("could not register hotkey {wanted:?}: {e}"))?;
+    crate::platform::applog::record("info", format!("panel hotkey registered: {wanted}"));
+    Ok(wanted)
+}
+
+/// Unregisters a previously-registered hotkey spec (best effort).
+pub fn unregister_hotkey(app: &AppHandle, spec: &str) {
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    if let Ok(shortcut) = Shortcut::from_str(spec) {
+        let _ = app.global_shortcut().unregister(shortcut);
+    }
+}
+
 /// Hotkey/tray toggle (Ctrl+Shift+Space default, FR-28).
 pub fn toggle_panel(app: &AppHandle) {
     let visible = app
@@ -246,4 +312,43 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     }
     tray.build(app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_hotkey;
+
+    /// FR-28: the shipped default is valid.
+    #[test]
+    fn default_hotkey_is_valid() {
+        validate_hotkey(super::DEFAULT_HOTKEY).expect("default parses");
+    }
+
+    /// D-045: Shift+Space alone is rejected (East-Asian IME full-width
+    /// toggle); Ctrl/Alt/Win-based combos are accepted.
+    #[test]
+    fn bare_shift_space_is_rejected() {
+        assert!(validate_hotkey("shift+space").is_err());
+        assert!(validate_hotkey("Shift + Space").is_err());
+        for ok in [
+            "ctrl+shift+space",
+            "alt+f9",
+            "ctrl+alt+m",
+            "win+shift+j",
+            "meta+ctrl+k",
+        ] {
+            validate_hotkey(ok).unwrap_or_else(|e| panic!("{ok} rejected: {e}"));
+        }
+    }
+
+    #[test]
+    fn malformed_specs_are_rejected() {
+        assert!(validate_hotkey("space").is_err(), "no modifier");
+        assert!(validate_hotkey("ctrl").is_err(), "no key");
+        assert!(
+            validate_hotkey("ctrl+shift+alt+meta+space").is_err(),
+            "too many"
+        );
+        assert!(validate_hotkey("ctrl+shift").is_err(), "modifier-only");
+    }
 }

@@ -15,6 +15,15 @@ fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Window background matching the effective theme at startup (D-040):
+/// teamsLight/teamsDark `colorNeutralBackground1`.
+fn theme_bg(mode: tauri::Theme) -> tauri::window::Color {
+    match mode {
+        tauri::Theme::Dark => tauri::window::Color(41, 41, 41, 255),
+        _ => tauri::window::Color(255, 255, 255, 255),
+    }
+}
+
 /// Data dirs per D-006: the encrypted mail DB never roams.
 fn profile_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let base = app
@@ -30,8 +39,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts(["ctrl+shift+space"])
-                .expect("default hotkey parses")
                 .with_handler(|app, _shortcut, event| {
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         platform::shell::toggle_panel(app);
@@ -52,7 +59,41 @@ pub fn run() {
                 let st = state.store_ref().lock().map_err(|_| "store poisoned")?;
                 app::seed_demo(&st);
             }
+
+            // Preferences read before `state` moves into app state.
+            let (hotkey, theme_setting) = {
+                let st = state.store_ref().lock().map_err(|_| "store poisoned")?;
+                let read = |key: &str| {
+                    crate::store::dao::get_setting(st.conn(), key)
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.as_str().map(String::from))
+                };
+                (read("panel.hotkey"), read("appearance.theme"))
+            };
             app.manage(state);
+
+            // Configurable panel hotkey (FR-28): the persisted spec wins; an
+            // invalid saved spec falls back to the default so the panel
+            // always works.
+            if let Err(e) = platform::shell::register_hotkey(app.handle(), hotkey.as_deref()) {
+                platform::applog::record("error", format!("saved hotkey rejected: {e}"));
+                let _ = platform::shell::register_hotkey(app.handle(), None);
+            }
+
+            // No-flash startup (D-040): paint the window background from the
+            // persisted theme choice (or the system theme) before the window
+            // becomes visible; the webview document carries the same color
+            // from the pre-paint script in index.html.
+            if let Some(main) = app.get_webview_window("main") {
+                let mode = match theme_setting.as_deref() {
+                    Some("dark") => tauri::Theme::Dark,
+                    Some("light") => tauri::Theme::Light,
+                    _ => main.theme().unwrap_or(tauri::Theme::Light),
+                };
+                let _ = main.set_background_color(Some(theme_bg(mode)));
+                let _ = main.show();
+            }
 
             let handle = app.handle().clone();
             std::thread::spawn(move || app::driver_loop(driver, Some(handle)));
@@ -109,6 +150,10 @@ pub fn run() {
             app::diagnostics_hosts,
             app::storage_usage,
             app::mcp_audit_tail,
+            app::set_panel_hotkey,
+            app::diagnostics_logs,
+            app::diagnostics_clear_logs,
+            app::prune_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running cracktivity");

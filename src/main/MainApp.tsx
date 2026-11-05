@@ -20,6 +20,7 @@ import { CleanupView } from "./CleanupView";
 import { SettingsView } from "./SettingsView";
 import { Composer, type ComposerTarget } from "./Composer";
 import { OnboardingDialog } from "./Onboarding";
+import { readKeymapScheme, syncKeymapScheme, type KeymapScheme } from "./keymap";
 import { S } from "../shared/strings";
 
 export function MainApp() {
@@ -32,6 +33,12 @@ export function MainApp() {
   const [adding, setAdding] = useState(false);
   const [composer, setComposer] = useState<ComposerTarget | null>(null);
   const [onboarding, setOnboarding] = useState(false);
+  const [keymap, setKeymap] = useState<KeymapScheme>(() => readKeymapScheme());
+
+  // Keymap scheme (FR-30 AC): DB row is canonical, mirror seeds first paint.
+  useEffect(() => {
+    syncKeymapScheme(setKeymap);
+  }, []);
 
   // First-run dialog (FR-20): exactly once, keyed by onboarding.completed.
   useEffect(() => {
@@ -208,7 +215,7 @@ export function MainApp() {
     [mail.accounts, mail.selectedThrid, mail.threads, mail.messages, mail, selectAt, markThreadRead, search, openComposer],
   );
   const modalOpen = overlay || palette || adding || composer !== null;
-  useKeyboard(actions, !modalOpen);
+  useKeyboard(actions, !modalOpen, keymap);
 
   const commands: PaletteCommand[] = useMemo(
     () => [
@@ -338,7 +345,7 @@ export function MainApp() {
         threadId={mail.selectedThrid}
         onDraftReply={openAiReply}
       />
-      <ShortcutsOverlay open={overlay} onClose={() => setOverlay(false)} />
+      <ShortcutsOverlay open={overlay} onClose={() => setOverlay(false)} scheme={keymap} />
       <CommandPalette
         open={palette}
         onClose={() => setPalette(false)}

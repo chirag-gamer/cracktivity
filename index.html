@@ -4,6 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>cracktivity</title>
+    <script>
+      // Pre-paint theme (D-040): apply the persisted choice (system/light/
+      // dark) before the first paint so dark-mode launches never flash
+      // white. The React provider reads the same attribute it set.
+      (function () {
+        try {
+          var v = localStorage.getItem("cracktivity.theme");
+          var dark =
+            v === "dark" ||
+            (v !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {
+          /* storage unavailable — CSS default (light) applies */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
