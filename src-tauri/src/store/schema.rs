@@ -207,5 +207,31 @@ ALTER TABLE accounts ADD COLUMN imap_host TEXT;
 ALTER TABLE accounts ADD COLUMN imap_port INTEGER;
 ";
 
-pub const MIGRATIONS: &[(&str, &str)] =
-    &[("1_create_core_schema", V1), ("2_account_imap_host", V2)];
+/// v3 — Phase-4 features: `messages.opened_at` latches the first reader open
+/// per message (sender_stats.opened increments exactly once — FR-14 open
+/// ranking), and a partial index serves the subscription-cleanup view.
+pub const V3: &str = r"
+ALTER TABLE messages ADD COLUMN opened_at INTEGER;
+CREATE INDEX idx_messages_list_unsub ON messages(list_unsubscribe) WHERE list_unsubscribe IS NOT NULL;
+";
+
+/// v4 — SMTP submission endpoints (FR-18): presets resolve theirs from
+/// `providers::ALL`; manual accounts store theirs explicitly.
+pub const V4: &str = r"
+ALTER TABLE accounts ADD COLUMN smtp_host TEXT;
+ALTER TABLE accounts ADD COLUMN smtp_port INTEGER;
+";
+
+/// v5 — per-sender image allowlist (FR-15/FR-19: "Always for this sender").
+/// NULL = ask per message; 1/0 = decided.
+pub const V5: &str = r"
+ALTER TABLE sender_stats ADD COLUMN show_images INTEGER;
+";
+
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    ("1_create_core_schema", V1),
+    ("2_account_imap_host", V2),
+    ("3_opened_at_and_cleanup_index", V3),
+    ("4_account_smtp_host", V4),
+    ("5_sender_show_images", V5),
+];

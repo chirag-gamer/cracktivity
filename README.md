@@ -1,4 +1,6 @@
-**Status:** in development. Phases 0–3 core are built (encrypted local store, IMAP sync, Important/Other triage, notch panel, keyboard-first UI — see [plan.md](plan.md)). Compose/Send, follow-ups, subscription cleanup, the on-device AI download and the MCP server land in later phases. Development builds only — no signed installer yet.
+**Status:** in development. Phases 0–4 are built (encrypted local store, IMAP sync, Important/Other triage, notch panel, keyboard-first UI, compose/send via SMTP with a Sent copy, "Waiting for Reply" follow-ups, subscription cleanup with one-click RFC 8058 unsubscribe + Undo, tracker blocking with a per-sender image allowlist, the opt-in on-device AI with model download/tiering/BYO keys, and the built-in MCP server with its safety gates — see [plan.md](plan.md)). Phase 5/6 polish (release signing, the signed updater, the QA matrix) is the remaining tail. Development builds only — no signed installer yet.
+
+To build with the AI sidecar, fetch the pinned llama.cpp build once (`node scripts/fetch-llama.mjs`; the tag is recorded in [decisions.md](decisions.md) D-030) — without it, everything except AI inference works.
 
 # cracktivity
 

@@ -64,15 +64,26 @@ pub fn set_starred(
     Ok(())
 }
 
+/// Where an archived message went (FR-14 Undo input): the server kept it,
+/// so "undo" is a MOVE back into the origin folder. Round-trips the IPC
+/// boundary (Serialize for the reply, Deserialize for the undo call).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ArchivedRef {
+    pub account_id: i64,
+    pub from_folder: String,
+    pub to_folder: String,
+    pub new_uid: u32,
+}
+
 /// Archives: `UID MOVE` to the account's archive folder (\Archive, falling
 /// back to \All — Gmail has no \Archive; All Mail is its archive target),
 /// then drops the local row. The message stays on the server; v1 does not
-/// sync archive folders.
+/// sync archive folders. Returns the undo reference for the caller.
 pub fn archive(
     t: &mut dyn MailTransport,
     store: &Store,
     message_id: i64,
-) -> Result<(), ActionError> {
+) -> Result<ArchivedRef, ActionError> {
     let addr = address_of(store, message_id)?;
     let folders = t.list_folders()?;
     let target = folders
@@ -86,8 +97,27 @@ pub fn archive(
         .map(|f| f.name.clone())
         .ok_or(ActionError::NoArchiveFolder)?;
     t.select(&addr.folder_name)?;
-    t.uid_move(&[addr.uid], &target)?;
+    let new_uid = t.uid_move(&[addr.uid], &target)?;
     queries::delete_message_rows(store.conn(), &[message_id])?;
+    Ok(ArchivedRef {
+        account_id: addr.account_id,
+        from_folder: addr.folder_name,
+        to_folder: target,
+        new_uid,
+    })
+}
+
+/// Reverses one archive (FR-14 Undo AC): MOVE back from the archive folder
+/// into the origin. The local row is not resurrected — the next inbox sync
+/// re-fetches the message (fresh UIDs keep the cache honest).
+pub fn restore_archived(
+    t: &mut dyn MailTransport,
+    from_folder: &str,
+    uid: u32,
+    to_folder: &str,
+) -> Result<(), ActionError> {
+    t.select(from_folder)?;
+    t.uid_move(&[uid], to_folder)?;
     Ok(())
 }
 
@@ -139,6 +169,8 @@ mod tests {
                 credential_ref: "cracktivity.test",
                 imap_host: None,
                 imap_port: None,
+                smtp_host: None,
+                smtp_port: None,
             },
         )
         .unwrap();

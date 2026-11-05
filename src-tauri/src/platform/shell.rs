@@ -158,6 +158,39 @@ pub fn hide_panel(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Opens a URL/scheme with the OS default handler (FR-14 mailto fallback).
+/// Callers must pre-validate the scheme; this only forwards the string to
+/// ShellExecuteW ("open").
+#[cfg(windows)]
+pub fn open_url(_app: &AppHandle, url: &str) -> Result<(), String> {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    unsafe {
+        let file = HSTRING::from(url);
+        let hresult = ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            windows::core::PCWSTR(file.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        );
+        // ShellExecuteW returns a value > 32 on success.
+        if hresult.0 as usize > 32 {
+            Ok(())
+        } else {
+            Err(format!("could not open {url:?} (ShellExecuteW failed)"))
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn open_url(_app: &AppHandle, _url: &str) -> Result<(), String> {
+    Err("unsupported platform".into())
+}
+
 /// Hotkey/tray toggle (Ctrl+Shift+Space default, FR-28).
 pub fn toggle_panel(app: &AppHandle) {
     let visible = app

@@ -51,6 +51,8 @@ fn env() -> Env {
             credential_ref: "ref",
             imap_host: None,
             imap_port: None,
+            smtp_host: None,
+            smtp_port: None,
         },
     )
     .unwrap();
@@ -528,6 +530,8 @@ fn secrets_never_reach_disk() {
             credential_ref: "cracktivity.test.acct",
             imap_host: None,
             imap_port: None,
+            smtp_host: None,
+            smtp_port: None,
         },
     );
 
@@ -618,4 +622,86 @@ fn sync_classifies_newsletters_and_direct_mail() {
         ("Weekly digest".into(), Some("other".into())),
         "List-Unsubscribe bulk mail"
     );
+}
+
+/// The sent-folder sync feeds the FR-13 follow-up view: a message I sent
+/// five days ago (in the server's Sent folder) lands in the local sent
+/// folder and the clock-injected query surfaces the thread.
+#[test]
+fn sent_sync_feeds_the_followup_view() {
+    let e = env();
+    let sent_days_ago = dao::now_ms() - 5 * 86_400_000;
+    let mut sent = crate::mail::mock::MockMailbox {
+        name: "Sent".into(),
+        uidvalidity: 42,
+        ..Default::default()
+    };
+    let mut m = msg(
+        "Quote attached",
+        "sent1@x",
+        None,
+        "me@example.com",
+        &["\\Seen"],
+    );
+    m.headers.insert("to".into(), "them@example.org".into());
+    m.internaldate_ms = sent_days_ago;
+    sent.push(m);
+
+    let mut transport = crate::mail::mock::MockTransport::new(mailbox_with(0));
+    transport.folders = vec![
+        FolderInfo {
+            name: "INBOX".into(),
+            role: Some(SpecialRole::Inbox),
+            subscribed: true,
+        },
+        FolderInfo {
+            name: "Sent".into(),
+            role: Some(SpecialRole::Sent),
+            subscribed: true,
+        },
+    ];
+    transport.mailboxes.push(sent);
+
+    use crate::mail::transport::{FolderInfo, SpecialRole};
+    sync_folder(
+        &mut transport,
+        &e.store,
+        e.account_id,
+        "INBOX",
+        &SyncOptions::default(),
+    )
+    .unwrap();
+    sync_folder(
+        &mut transport,
+        &e.store,
+        e.account_id,
+        "Sent",
+        &SyncOptions::default(),
+    )
+    .unwrap();
+
+    // The clock-injected query (V-4.2 shape): five days later the thread waits.
+    let now = dao::now_ms();
+    let rows = crate::store::queries::waiting_for_reply(
+        e.store.conn(),
+        crate::store::queries::Scope::Unified,
+        now,
+        3,
+        50,
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1, "waiting: {rows:?}");
+    assert_eq!(rows[0].to.as_ref().unwrap().email, "them@example.org");
+
+    // Before the threshold: nothing waits.
+    assert!(crate::store::queries::waiting_for_reply(
+        e.store.conn(),
+        crate::store::queries::Scope::Unified,
+        sent_days_ago + 86_400_000,
+        3,
+        50,
+    )
+    .unwrap()
+    .is_empty());
+    cleanup(&e.dek_target);
 }

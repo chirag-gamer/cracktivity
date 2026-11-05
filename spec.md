@@ -149,9 +149,9 @@ Only one write-tier model loaded at a time; classify stays resident; write proce
 
 ### 6.2 Process & transport
 
-`llama-server.exe` (pinned stable release zip, MIT) spawned via `std::process::Command` from resources dir:
-`-m <model> -c <4096|8192> -t <P-core-count> -tb <P-core-count> -np 1 --host 127.0.0.1 --port <ephemeral> --api-key <random-per-run> --cache-prompt --cache-reuse 256 --cache-ram 2048 -lm mmap --no-webui`
-Readiness: poll `GET /health` until 200. Requests: `POST /v1/chat/completions` (SSE stream). Structured output (classification JSON): `response_format: {"type":"json_schema","json_schema":{...strict...}}`.
+`llama-server.exe` (pinned release zip, MIT; binary-bearing build tags verified in D-030 — `b12110`) spawned via `std::process::Command` from resources dir:
+`-m <model> -c <4096|8192> -t <P-core-count> -tb <P-core-count> -np 1 --host 127.0.0.1 --port <ephemeral> --api-key <random-per-run> --cache-prompt --cache-reuse 256 --cache-ram 2048 --load-mode mmap --no-webui` (D-030: `--load-mode mmap` supersedes the deprecated `--mmap`; the server's default port is now 9931 — we always pass an explicit ephemeral port).
+Readiness: poll `GET /health` until 200 (503 while loading). Requests: `POST /v1/chat/completions` (SSE stream). Structured output (classification JSON): `response_format: {"type":"json_schema","json_schema":{...strict...}}`.
 
 ### 6.3 ChatEngine trait (covers BYO keys)
 
@@ -196,7 +196,7 @@ Known limits (documented in-product, NFR-10): allowed images leak IP; click-trac
 
 ## 9. MCP server (D-012)
 
-- Runtime: `rmcp` 3.8.x, `transport-io` (stdio), tool macros + schemars. Role dispatch in `main.rs`: `--mcp` → skip all GUI/window/tray init; log to stderr only.
+- Runtime: `rmcp` 3.8.x with features `["server", "transport-io"]` (`transport-io` is not a default — D-033), tool macros + `rmcp::schemars`; `ServerHandler::get_info` returns `ServerConfig` (3.x shape). Role dispatch in `main.rs`: `--mcp` → skip all GUI/window/tray init; log to stderr only.
 - Tools: `list_inboxes`, `list_recent_emails{inbox_id?,limit?,since?}`, `search_emails{query,inbox_id?,after?,before?,limit?}`, `read_thread{thread_id}` (plain text only), `summarize_thread{thread_id}`, `create_draft{...}` → `draft_id`, gated pair `preview_send{draft_id}` → `send_draft{draft_id, confirm_token}`.
 - Safety: read-only default; Settings → MCP gates sends; single-use confirm token bound to a SHA-256 fingerprint of the previewed content; per-hour send rate limit; audit_log rows for every mutation; Spam/Trash excluded from all tool output; verification-code-like strings redacted; bodies fenced `<untrusted_mail_body nonce=…>` with escaped closing tags.
 - One-click registration: writes/merges `claude_desktop_config.json`, `~/.claude.json` (Claude Code), `~/.codex/config.toml`, `~/.cursor/mcp.json` — always with a `.bak` backup and a UI diff preview.

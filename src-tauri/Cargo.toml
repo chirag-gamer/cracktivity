@@ -34,6 +34,18 @@ getrandom = "0.4"
 # IMAP transport (D-009): blocking client over rustls (crate default features).
 io-imap = "0.8"
 io-sasl = "0.1"
+# SMTP submission (FR-18): blocking client over rustls.
+lettre = { version = "0.11", default-features = false, features = [
+    "builder",
+    "smtp-transport",
+    "rustls-tls",
+    "hostname",
+] }
+# Phase-4 render pipeline v2 (spec §8 step 2): streaming HTML rewriter.
+lol_html = "3"
+# MCP server role (D-012/D-033): official Rust SDK; transport-io is NOT a
+# default feature — required for stdio serving.
+rmcp = { version = "3.8", features = ["server", "transport-io"] }
 url = "2"
 mail-parser = "0.11.9"
 secrecy = "0.10"
@@ -41,12 +53,20 @@ ureq = "3.5.1"
 sha2 = "0.11.1"
 base64 = "0.23.1"
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"
 # `tauri::test` MockRuntime harness (D-018 L2); kept out of release builds
 tauri = { version = "2.12", features = ["test"] }
+# V-4.3 fixture: a real TLS server so the RFC 8058 wire contract (HTTPS-only)
+# is testable end-to-end without any network.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1"
+rcgen = "0.13"
+# V-4.6: the rmcp client drives the handshake/tool tests over an in-process
+# duplex transport.
+rmcp = { version = "3.8", features = ["client"] }
 
 [features]
 # gui is the default binary role; mcp role dispatches in main.rs (spec §1)

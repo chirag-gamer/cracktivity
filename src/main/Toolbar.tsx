@@ -19,9 +19,18 @@ export interface ToolbarProps {
   onSearch: (results: SearchRow[] | null) => void;
   onAddAccount: () => void;
   statuses: AccountStatus[];
+  /** FR-9 completion: extend results with server-side IMAP SEARCH. */
+  alsoServer?: boolean;
 }
 
-export function Toolbar({ filter, onFilter, onSearch, onAddAccount, statuses }: ToolbarProps) {
+export function Toolbar({
+  filter,
+  onFilter,
+  onSearch,
+  onAddAccount,
+  statuses,
+  alsoServer,
+}: ToolbarProps) {
   const [q, setQ] = useState("");
   const offline = statuses.some((s) => s.state === "offline");
   const authTrouble = statuses.some((s) => s.state === "auth_failed");
@@ -34,7 +43,7 @@ export function Toolbar({ filter, onFilter, onSearch, onAddAccount, statuses }: 
     }
     try {
       const { ipc } = await import("../shared/ipc");
-      onSearch(await ipc.searchMessages(query));
+      onSearch(await ipc.searchMessages(query, alsoServer));
     } catch {
       onSearch([]);
     }

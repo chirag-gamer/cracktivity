@@ -56,6 +56,7 @@ export interface OpenedBody {
   text: string | null;
   html: string | null;
   blocked_images: number;
+  tracking_count: number;
   snippet: string;
 }
 
@@ -72,5 +73,73 @@ export interface SearchRow {
 
 export type ImportanceFilter = "all" | "important" | "other";
 
-/** The selected view: the unified inbox (FR-11) or one account (FR-4). */
-export type ViewScope = { kind: "unified" } | { kind: "account"; id: number };
+/** The selected view: unified inbox, one account (FR-4), or a tool view. */
+export type ViewScope =
+  | { kind: "unified" }
+  | { kind: "account"; id: number }
+  | { kind: "followups" }
+  | { kind: "cleanup" }
+  | { kind: "settings" };
+
+// ------------------------------------------------------------------ Phase 4
+
+/** One "Waiting for Reply" row (FR-13). */
+export interface FollowupRow {
+  thrid: string;
+  account_id: number;
+  account_email: string;
+  subject: string;
+  snippet: string;
+  to: Addr | null;
+  sent_date: number;
+  days_waiting: number;
+}
+
+/** One sender row of the subscription-cleanup view (FR-14). */
+export interface SubscriptionRow {
+  sender_email: string;
+  sender_name: string | null;
+  account_id: number;
+  received: number;
+  opened: number;
+  last_date: number;
+  list_unsubscribe: string | null;
+  list_unsub_post: string | null;
+}
+
+/** Where an archived message went — the FR-14 Undo input. */
+export interface ArchivedRef {
+  account_id: number;
+  from_folder: string;
+  to_folder: string;
+  new_uid: number;
+}
+
+export interface DraftRow {
+  id: number;
+  account_id: number;
+  thread_id: number | null;
+  to: Addr[];
+  cc: Addr[];
+  subject: string | null;
+  body_text: string | null;
+  in_reply_to: string | null;
+  status: string;
+  error: string | null;
+  updated_at: number;
+}
+
+export interface AiStatus {
+  enabled: boolean;
+  engine: string;
+  tier: string;
+  tier_reason: string;
+  tier_is_override: boolean;
+  model_downloaded: boolean;
+  sidecar_running: boolean;
+  byo_configured: { openai: boolean; anthropic: boolean; xai: boolean };
+  model_disk_bytes: number;
+}
+
+/** Audit tail row: id, at, actor, action, detail json. */
+export type AuditRow = [number, number, string, string, string];

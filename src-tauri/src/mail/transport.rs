@@ -111,4 +111,16 @@ pub trait MailTransport {
     fn idle_once(&mut self, timeout_secs: u64) -> TransportResult<IdleEvent>;
     /// APPEND with UIDPLUS-assigned UID (Sent copy, spec §4.6).
     fn append(&mut self, mailbox: &str, message: &[u8], flags: &[String]) -> TransportResult<u32>;
+    /// `UID SEARCH <field> "<needle>"` — the server-side search toggle (FR-9
+    /// completion). Matching is the server's (substring, case-insensitive).
+    fn uid_search(&mut self, field: SearchField, needle: &str) -> TransportResult<Vec<u32>>;
+}
+
+/// Which header/body the server-side SEARCH runs against (FR-9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchField {
+    Subject,
+    From,
+    To,
+    Text,
 }

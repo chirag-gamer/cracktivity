@@ -1,23 +1,42 @@
-//! Mail rendering pipeline (spec §8 v1, D-014): one ammonia pass that
-//! sanitizes attacker-controlled HTML, blocks **all** remote images (v1 has
-//! no tracker list and no "show images" override — those land with lol_html
-//! in Phase 4), and strips known tracking parameters from links.
+//! Mail rendering pipeline (spec §8 v2, D-014): ammonia sanitization →
+//! lol_html image neutralization (with per-sender/per-message "show images"
+//! overrides routed through the app's own fetch proxy) → link cleaning →
+//! sandboxed-iframe document.
 //!
-//! The output is a full srcdoc document carrying its own CSP meta tag, so
-//! the reader's sandboxed iframe (spec §8.4: `sandbox=""`, no scripts) is
-//! defense-in-depth on top of this pass — the iframe blocks script even if
-//! sanitization ever regresses.
+//! v2 supersedes the v1 single-ammonia-pass (D-026): ammonia still strips
+//! scripts/iframes/handlers and cleans link parameters, but remote images now
+//! flow through the lol_html pass which can either BLOCK them (placeholder +
+//! count, the default) or REWRITE them to the loopback image proxy
+//! (`Show images` / per-sender allowlist). The output carries its own CSP
+//! meta, so the reader's sandboxed iframe (`sandbox=""`) stays
+//! defense-in-depth.
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use ammonia::Builder;
+use lol_html::{element, rewrite_str, RewriteStrSettings};
 use url::Url;
 
-/// Tracking parameters stripped from link hrefs (spec §8.3: `utm_*` plus
-/// the universal click-ids; the bundled redirect-prefix list is Phase 4).
+/// Tracking parameters stripped from link hrefs (spec §8.3: `utm_*` plus the
+/// universal click-ids; the bundled redirect-prefix list is Phase 4).
 const TRACKING_PARAMS: [&str; 4] = ["fbclid", "gclid", "mc_eid", "msclkid"];
+
+/// Known email-tracker domains (hand-curated from permissively-licensed
+/// sources + widely documented vendors, D-014). Substring match on the image
+/// host. Updates are opt-in only (D-015/D-016); this list never auto-grows.
+const TRACKER_DOMAINS: [&str; 10] = [
+    "list-manage",
+    "campaign-archive",
+    "mandrill",
+    "sendgrid",
+    "hubspot",
+    "hsforms",
+    "marketo",
+    "clickdimensions",
+    "exacttarget",
+    "salesforce",
+];
 
 fn is_tracking_param(key: &str) -> bool {
     key.starts_with("utm_") || TRACKING_PARAMS.contains(&key)
@@ -51,62 +70,153 @@ fn clean_href(value: &str) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(url.to_string()))
 }
 
+/// How remote images are treated for this render (FR-15/FR-19 overrides).
+#[derive(Debug, Clone, Default)]
+pub struct RenderOptions {
+    /// Per-message "Show images" or per-sender allowlist. `false` (default):
+    /// images are blocked and counted.
+    pub allow_remote_images: bool,
+    /// Origin of the loopback image proxy (`http://127.0.0.1:port`), present
+    /// when the proxy is running. Allowed images are rewritten to proxy URLs
+    /// so the fetch carries no referer/cookies and is visible in Diagnostics.
+    /// Without a proxy, allowed images load directly from the webview (the
+    /// CSP gains `https: img-src`) — the honest-IP caveat applies either way.
+    pub proxy_origin: Option<String>,
+}
+
 /// Sanitized document ready for the reader iframe's `srcdoc`.
 pub struct Rendered {
     /// Complete HTML document (CSP meta included).
     pub html: String,
-    /// Remote images blocked (feeds the FR-15 badge from Phase 4 on).
+    /// Remote images blocked by policy (feeds the FR-15 badge).
     pub blocked_images: usize,
+    /// Images that matched tracker heuristics (pixel-shaped or known tracker
+    /// domain) — the "Blocked N trackers" badge counts these (FR-15).
+    pub tracking_count: usize,
 }
 
-const CSP_META: &str =
-    r#"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:">"#;
+fn csp_for(allow: bool, proxy_origin: Option<&str>) -> String {
+    let img_src = match (allow, proxy_origin) {
+        (true, Some(origin)) => format!("data: {origin}"),
+        (true, None) => "data: https:".to_string(),
+        (false, _) => "data:".to_string(),
+    };
+    format!(
+        r#"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {img_src}; style-src 'unsafe-inline'">"#
+    )
+}
 
-/// The v1 pipeline over one message's raw HTML.
-pub fn render_document(raw_html: &str) -> Rendered {
-    let blocked = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&blocked);
+/// The v2 pipeline over one message's raw HTML.
+pub fn render_document_opts(raw_html: &str, opts: &RenderOptions) -> Rendered {
+    let blocked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let trackers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
+    // Step 1: ammonia whitelist sanitization (strip script/iframe/form/object,
+    // on* handlers, javascript:/data: URLs). Images pass through untouched so
+    // lol_html can decide their fate.
     let mut builder = Builder::new();
-    // Defaults already exclude script/style/iframe/form/object/embed/meta/
-    // link/base tags and all on* attributes; also drop those elements'
-    // content wholesale so no payload survives in discarded wrappers.
     builder.add_clean_content_tags(["iframe", "form", "object", "embed"]);
-    // Only http(s) survives on href/src: javascript:, data:, cid: are gone.
     builder.url_schemes(
         std::iter::once("http")
             .chain(std::iter::once("https"))
             .collect(),
     );
-    // srcset is not in ammonia's default img allowlist; adding it lets the
-    // filter see (and count) every remote image reference before stripping.
-    builder.add_tag_attributes("img", ["srcset"]);
-    builder.attribute_filter(move |element, attribute, value| {
-        match (element, attribute) {
-            // Block ALL remote images (v1 policy): strip the attribute and
-            // count it. cid: images never reach here (scheme filter).
-            ("img", "src") | ("img", "srcset") => {
-                counter.fetch_add(1, Ordering::Relaxed);
-                None
-            }
-            ("a", "href") => clean_href(value),
-            _ => Some(Cow::Borrowed(value)),
-        }
+    builder.add_tag_attributes("img", ["src", "srcset", "width", "height"]);
+    builder.attribute_filter(|_element, attribute, value| match attribute {
+        "href" => clean_href(value),
+        _ => Some(Cow::Borrowed(value)),
     });
+    let sanitized = builder.clean(raw_html).to_string();
 
-    let body = builder.clean(raw_html).to_string();
-    // <base target="_blank"> redirects every link to a new window — which
-    // sandbox="" (no allow-popups) then blocks outright. Without it, a click
-    // would navigate the frame itself to the remote site (IP leak /
-    // in-reader phishing). The href (utm-stripped) stays intact for the
-    // Phase-4 external-open flow. Review-pass fix, D-028.
+    // Step 2: lol_html neutralization of remote images.
+    let blocked_c = Arc::clone(&blocked);
+    let trackers_c = Arc::clone(&trackers);
+    let allow = opts.allow_remote_images;
+    let proxy_origin = opts.proxy_origin.clone();
+    let handler = element!("img", move |el: &mut lol_html::html_content::Element| {
+        el.remove_attribute("srcset");
+        let Some(src) = el.get_attribute("src") else {
+            return Ok(());
+        };
+        // cid: references were already dropped by ammonia's scheme filter.
+        let Ok(parsed) = Url::parse(&src) else {
+            el.remove_attribute("src");
+            return Ok(());
+        };
+        if !matches!(parsed.scheme(), "http" | "https") {
+            el.remove_attribute("src");
+            return Ok(());
+        }
+        let is_tracker = pixel_shaped(el) || {
+            parsed
+                .host_str()
+                .map(|h| {
+                    let h = h.to_lowercase();
+                    TRACKER_DOMAINS.iter().any(|d| h.contains(d))
+                })
+                .unwrap_or(false)
+        };
+        if is_tracker {
+            trackers_c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        if is_tracker {
+            // Tracker pixels stay blocked regardless of the allowlist —
+            // that is the product's job (FR-15 badge stays honest).
+            el.remove_attribute("src");
+            el.set_attribute("data-blocked-src", &src).ok();
+            el.set_attribute("data-blocked-img", "").ok();
+            blocked_c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else if allow {
+            // Route through the app's fetch proxy (no referer, no cookies);
+            // fall back to a direct remote URL when no proxy is running.
+            if let Some(origin) = &proxy_origin {
+                let proxied = crate::render::proxy::proxied_url(origin, &src);
+                el.set_attribute("src", &proxied).ok();
+            }
+        } else {
+            // data-blocked-src keeps the URL inspectable without loading
+            // it (spec §8.2 placeholder; its consumer is "Show images").
+            el.remove_attribute("src");
+            el.set_attribute("data-blocked-src", &src).ok();
+            el.set_attribute("data-blocked-img", "").ok();
+            blocked_c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(())
+    });
+    let rewritten = rewrite_str(
+        &sanitized,
+        RewriteStrSettings::new().append_element_content_handler(handler),
+    )
+    .unwrap_or(sanitized);
+
+    // Steps 3 (link cleaning) ran inside ammonia's attribute filter.
+    // Step 4: the sandboxed-iframe document with a matching CSP meta.
+    let csp = csp_for(opts.allow_remote_images, opts.proxy_origin.as_deref());
     Rendered {
         html: format!(
-            "<!DOCTYPE html><html><head>{CSP_META}<base target=\"_blank\"><style>body{{margin:0;font:14px system-ui;padding:12px}}img{{display:none}}</style></head><body>{body}</body></html>"
+            "<!DOCTYPE html><html><head>{csp}<base target=\"_blank\"><style>body{{margin:0;font:14px system-ui;padding:12px}}img[data-blocked-img]{{display:none}}</style></head><body>{rewritten}</body></html>"
         ),
-        blocked_images: blocked.load(Ordering::Relaxed),
+        blocked_images: blocked.load(std::sync::atomic::Ordering::Relaxed),
+        tracking_count: trackers.load(std::sync::atomic::Ordering::Relaxed),
     }
 }
+
+/// Pixel heuristics (spec §8.2): explicit 1×1 dimensions.
+fn pixel_shaped(el: &lol_html::html_content::Element) -> bool {
+    let dim = |name: &str| {
+        el.get_attribute(name)
+            .and_then(|v| v.trim().parse::<u32>().ok())
+    };
+    matches!((dim("width"), dim("height")), (Some(1), Some(1)))
+        || (dim("width").is_none() && dim("height").is_none() && el.has_attribute("data-pixel"))
+}
+
+/// v1-compatible entry point (default policy: block all remote images).
+pub fn render_document(raw_html: &str) -> Rendered {
+    render_document_opts(raw_html, &RenderOptions::default())
+}
+
+pub mod proxy;
 
 #[cfg(test)]
 mod tests {
@@ -125,7 +235,11 @@ mod tests {
         assert!(!h.contains("iframe"), "iframe removed: {h}");
         assert!(!h.contains("onclick"), "handlers stripped: {h}");
         assert_eq!(out.blocked_images, 1);
-        assert!(!h.contains("px.gif"), "remote img blocked: {h}");
+        assert!(
+            !h.contains(" src="),
+            "no live remote src (URL survives only in data-blocked-src): {h}"
+        );
+        assert!(h.contains("data-blocked-src"), "placeholder present: {h}");
     }
 
     #[test]
@@ -160,16 +274,69 @@ mod tests {
         assert_eq!(out.blocked_images, 0);
     }
 
+    /// V-4.4: the tracked fixture — pixel-shaped image + known tracker domain
+    /// both count as trackers; the blocked URL survives only in the
+    /// data-blocked-src placeholder.
     #[test]
-    fn srcset_counts_and_cid_is_dropped() {
+    fn trackers_are_counted_and_blocked() {
         let out = render_document(
-            r#"<img srcset="https://a.example/1.png 1x, https://a.example/2.png 2x" src="cid:logo">"#,
+            r#"<img src="https://mailfoogane.a.sendgrid.net/open.gif" width="1" height="1">
+               <img src="https://list-manage.com/track.png">"#,
         );
-        // srcset is one blocked remote reference; the cid: src is dropped by
-        // the scheme allowlist before the filter runs (blocked either way,
-        // just not double-counted).
+        assert_eq!(out.blocked_images, 2);
+        assert_eq!(out.tracking_count, 2);
+        let h = &out.html;
+        assert!(h.contains("data-blocked-src"), "placeholder present: {h}");
+        assert!(!h.contains(" src="), "no live remote src: {h}");
+    }
+
+    /// V-4.4: the allowlist override — allowed images are rewritten to the
+    /// proxy origin and the CSP gains the proxy as an img-src.
+    #[test]
+    fn allowed_images_route_through_the_proxy() {
+        let out = render_document_opts(
+            r#"<img src="https://media.example/photo.jpg" srcset="https://media.example/photo@2x.jpg 2x">
+               <img src="https://t.example/px.gif" width="1" height="1">"#,
+            &RenderOptions {
+                allow_remote_images: true,
+                proxy_origin: Some("http://127.0.0.1:4567".into()),
+            },
+        );
+        let h = &out.html;
+        assert!(
+            h.contains("http://127.0.0.1:4567/img?t="),
+            "proxy rewrite: {h}"
+        );
+        assert!(!h.contains("srcset"), "srcset always dropped: {h}");
+        // The tracker pixel stays blocked even when images are allowed.
         assert_eq!(out.blocked_images, 1);
-        assert!(!out.html.contains("a.example"));
+        assert_eq!(out.tracking_count, 1);
+        assert!(h.contains("img-src data: http://127.0.0.1:4567"), "{h}");
+    }
+
+    /// Allowed without a proxy: direct https load, CSP gains https:.
+    #[test]
+    fn allowed_images_without_proxy_load_directly() {
+        let out = render_document_opts(
+            r#"<img src="https://media.example/photo.jpg">"#,
+            &RenderOptions {
+                allow_remote_images: true,
+                proxy_origin: None,
+            },
+        );
+        assert!(out.html.contains("src=\"https://media.example/photo.jpg\""));
+        assert!(
+            out.html.contains("img-src data: https:"),
+            "{h}",
+            h = out.html
+        );
+        assert_eq!(out.blocked_images, 0);
+    }
+
+    #[test]
+    fn cid_references_stay_dropped() {
+        let out = render_document(r#"<img src="cid:logo">"#);
         assert!(!out.html.contains("cid:"));
+        assert_eq!(out.blocked_images, 0, "cid is not a remote image");
     }
 }

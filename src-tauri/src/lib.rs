@@ -45,7 +45,9 @@ pub fn run() {
             platform::shell::create_tray(app.handle())?;
 
             let dir = profile_dir(app.handle())?;
-            let (state, driver) = app::AppState::new(&dir)?;
+            let (state, driver) =
+                app::AppState::new(dir.parent().ok_or("app data dir has no parent")?)?;
+            state.set_ai_resource_dir(&app.handle().path().resource_dir()?);
             if e2e_seed {
                 let st = state.store_ref().lock().map_err(|_| "store poisoned")?;
                 app::seed_demo(&st);
@@ -72,6 +74,8 @@ pub fn run() {
             app::thread_list,
             app::thread_messages,
             app::message_body,
+            app::message_opened,
+            app::set_sender_images,
             app::search_messages,
             app::unread_total,
             app::mark_read,
@@ -81,6 +85,30 @@ pub fn run() {
             app::add_account,
             app::sync_now,
             app::hide_panel,
+            app::followups_list,
+            app::set_followup_days,
+            app::cleanup_list,
+            app::unsubscribe_sender,
+            app::bulk_archive_sender,
+            app::undo_bulk_archive,
+            app::save_draft,
+            app::list_drafts,
+            app::delete_draft,
+            app::send_draft,
+            app::open_mailto,
+            app::get_settings,
+            app::set_setting,
+            app::ai_status,
+            app::ai_set_enabled,
+            app::ai_download_model,
+            app::ai_delete_model,
+            app::ai_set_key,
+            app::ai_summarize,
+            app::ai_draft_reply,
+            app::mcp_register,
+            app::diagnostics_hosts,
+            app::storage_usage,
+            app::mcp_audit_tail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running cracktivity");

@@ -1,7 +1,8 @@
 /**
  * Main window shell (FR-29): accounts/folders · list · reader, wired to the
  * keyboard model (FR-30), Ctrl+1..9 account switching (FR-4), Important/Other
- * filter (FR-11) and local FTS search (FR-9 v1).
+ * filter (FR-11), local FTS search (FR-9), and the Phase-4 tool views
+ * (follow-ups, cleanup, settings) plus the composer and first-run onboarding.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ipc } from "../shared/ipc";
@@ -14,14 +15,47 @@ import { Reader } from "./Reader";
 import { Toolbar, SearchResults } from "./Toolbar";
 import { CommandPalette, ShortcutsOverlay, type PaletteCommand } from "./Overlays";
 import { AddAccountDialog } from "./AddAccountDialog";
+import { FollowupsView } from "./FollowupsView";
+import { CleanupView } from "./CleanupView";
+import { SettingsView } from "./SettingsView";
+import { Composer, type ComposerTarget } from "./Composer";
+import { OnboardingDialog } from "./Onboarding";
 import { S } from "../shared/strings";
 
 export function MainApp() {
   const mail = useMail();
   const [search, setSearch] = useState<SearchRow[] | null>(null);
+  const [alsoServer, setAlsoServer] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
   const [overlay, setOverlay] = useState(false);
   const [palette, setPalette] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [composer, setComposer] = useState<ComposerTarget | null>(null);
+  const [onboarding, setOnboarding] = useState(false);
+
+  // First-run dialog (FR-20): exactly once, keyed by onboarding.completed.
+  useEffect(() => {
+    if (mail.loading) return;
+    if (mail.accounts.length > 0) return;
+    ipc
+      .getSettings()
+      .then((s) => {
+        if (!s["onboarding.completed"]) setOnboarding(true);
+      })
+      .catch(() => {});
+    // Only on the initial load.
+
+  }, [mail.loading]);
+
+  useEffect(() => {
+    ipc
+      .getSettings()
+      .then((s) => {
+        setAlsoServer(s["search.also_server"] === true);
+        setAiEnabled(s["ai.enabled"] === true);
+      })
+      .catch(() => {});
+  }, []);
 
   // Selection cursor for j/k: index into the current thread list.
   const cursor = useRef(0);
@@ -85,6 +119,13 @@ export function MainApp() {
     return mail.threads.find((t) => t.thrid === thrid) ?? null;
   };
 
+  const openComposer = useCallback(
+    (target: ComposerTarget) => {
+      setComposer(target);
+    },
+    [],
+  );
+
   const actions = useMemo(
     () => ({
       move: (delta: number) => selectAt(cursor.current + delta),
@@ -127,6 +168,28 @@ export function MainApp() {
           .then(() => mail.refresh())
           .catch(() => {});
       },
+      compose: () => {
+        const first = mail.accounts[0];
+        if (first) {
+          openComposer({
+            accountId: first.id,
+            to: [],
+            subject: "",
+          });
+        }
+      },
+      reply: () => {
+        const t = newestOf(mail.selectedThrid);
+        if (!t || mail.messages.length === 0) return;
+        const last = mail.messages[mail.messages.length - 1];
+        openComposer({
+          accountId: last.account_id,
+          to: last.from,
+          subject: t.subject.startsWith("Re:") ? t.subject : `Re: ${t.subject}`,
+          inReplyTo: null,
+          threadId: t.thrid,
+        });
+      },
       focusSearch: () => {
         (document.getElementById("global-search") as HTMLInputElement | null)?.focus();
       },
@@ -142,9 +205,9 @@ export function MainApp() {
         if (search) setSearch(null);
       },
     }),
-    [mail.accounts, mail.selectedThrid, mail.threads, mail.messages, mail, selectAt, markThreadRead, search],
+    [mail.accounts, mail.selectedThrid, mail.threads, mail.messages, mail, selectAt, markThreadRead, search, openComposer],
   );
-  const modalOpen = overlay || palette || adding;
+  const modalOpen = overlay || palette || adding || composer !== null;
   useKeyboard(actions, !modalOpen);
 
   const commands: PaletteCommand[] = useMemo(
@@ -159,15 +222,68 @@ export function MainApp() {
         label: S.cmdAccount(i + 1, a.display_name ?? a.email),
         run: () => mail.setScope({ kind: "account", id: a.id }),
       })),
+      { id: "followups", label: S.followups, run: () => mail.setScope({ kind: "followups" }) },
+      { id: "cleanup", label: S.cleanup, run: () => mail.setScope({ kind: "cleanup" }) },
+      { id: "settings", label: S.settings, run: () => mail.setScope({ kind: "settings" }) },
       { id: "sync", label: S.cmdSync, run: () => void ipc.syncNow().catch(() => {}) },
       { id: "add", label: S.addAccount, run: () => setAdding(true) },
+      {
+        id: "compose",
+        label: S.compose,
+        run: () => {
+          const first = mail.accounts[0];
+          if (first)
+            openComposer({
+              accountId: first.id,
+              to: [],
+              subject: "",
+            });
+        },
+      },
     ],
-    [mail],
+    [mail, openComposer],
   );
 
   const onMarkRead = useCallback((m: { id: number; unread: boolean }) => {
     ipc.markRead(m.id, !m.unread).catch(() => {});
   }, []);
+
+  const openFollowUp = useCallback(
+    (row: { account_id: number; to: { email: string } | null; subject: string; thrid: string }) => {
+      openComposer({
+        accountId: row.account_id,
+        to: row.to ? [row.to] : [],
+        subject: row.subject.startsWith("Re:") ? row.subject : `Re: ${row.subject}`,
+        threadId: row.thrid,
+      });
+    },
+    [openComposer],
+  );
+
+  const openAiReply = useCallback(
+    (threadId: string, instruction: string) => {
+      const last = mail.messages[mail.messages.length - 1];
+      const t = newestOf(threadId);
+      if (!last) return;
+      openComposer({
+        accountId: last.account_id,
+        to: last.from,
+        subject: t && !t.subject.startsWith("Re:") ? `Re: ${t.subject}` : (t?.subject ?? ""),
+        threadId,
+        initialBody: "",
+      });
+      // The instruction steers the AI draft (FR-22); pass it through the
+      // composer's streaming effect via the subject field is wrong — the
+      // composer streams with its own instruction, so stash it on the DOM
+      // node for the composer to read on mount.
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("cracktivity:ai-instruction", { detail: instruction }),
+        );
+      }, 0);
+    },
+    [mail.messages],
+  );
 
   return (
     <div className="app-shell" data-testid="main-app">
@@ -178,14 +294,23 @@ export function MainApp() {
         onScope={mail.setScope}
       />
       <div className="pane-middle">
-        <Toolbar
-          filter={mail.filter}
-          onFilter={mail.setFilter}
-          onSearch={setSearch}
-          onAddAccount={() => setAdding(true)}
-          statuses={mail.statuses}
-        />
-        {search ? (
+        {mail.scope.kind !== "settings" && (
+          <Toolbar
+            filter={mail.filter}
+            onFilter={mail.setFilter}
+            onSearch={setSearch}
+            onAddAccount={() => setAdding(true)}
+            statuses={mail.statuses}
+            alsoServer={alsoServer}
+          />
+        )}
+        {mail.scope.kind === "followups" ? (
+          <FollowupsView scope={mail.scope} onFollowUp={openFollowUp} />
+        ) : mail.scope.kind === "cleanup" ? (
+          <CleanupView />
+        ) : mail.scope.kind === "settings" ? (
+          <SettingsView />
+        ) : search ? (
           <SearchResults
             results={search}
             onOpen={(t) => {
@@ -206,7 +331,13 @@ export function MainApp() {
           />
         )}
       </div>
-      <Reader messages={mail.messages} onMarkRead={onMarkRead} />
+      <Reader
+        messages={mail.messages}
+        onMarkRead={onMarkRead}
+        aiEnabled={aiEnabled}
+        threadId={mail.selectedThrid}
+        onDraftReply={openAiReply}
+      />
       <ShortcutsOverlay open={overlay} onClose={() => setOverlay(false)} />
       <CommandPalette
         open={palette}
@@ -218,6 +349,29 @@ export function MainApp() {
         onClose={() => setAdding(false)}
         onAdded={() => void ipc.syncNow().catch(() => {})}
       />
+      {composer && (
+        <div className="overlay">
+          <Composer
+            target={composer}
+            onClose={() => setComposer(null)}
+            onSent={() => mail.refresh()}
+          />
+        </div>
+      )}
+      <OnboardingDialog
+        open={onboarding}
+        onFinish={() => setOnboarding(false)}
+        onAddAccount={() => setAdding(true)}
+      />
     </div>
   );
 }
+
+/** AI master switch read once per mount (the Settings view reloads it). */
+const aiEnabledRef = { current: false };
+void ipc
+  .getSettings()
+  .then((s) => {
+    aiEnabledRef.current = s["ai.enabled"] === true;
+  })
+  .catch(() => {});

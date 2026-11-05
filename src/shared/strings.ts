@@ -53,4 +53,99 @@ export const S = {
   panelHints: "j/k move · e archive · u read · Enter open · Esc hide",
   openInApp: "Open in cracktivity",
   loading: "Loading…",
+
+  // -- Phase 4: follow-ups (FR-13)
+  followups: "Waiting for reply",
+  followupsEmpty: "Nothing waiting on a reply",
+  followUpDays: "Wait before following up",
+  writeFollowUp: "Write follow-up",
+  daysWaiting: (n: number) => (n <= 0 ? "today" : `${n} day${n === 1 ? "" : "s"}`),
+
+  // -- Phase 4: subscription cleanup (FR-14)
+  cleanup: "Subscriptions",
+  cleanupEmpty: "No unsubscribe-able senders found",
+  cleanupReceived: (n: number) => `${n} received`,
+  cleanupOpened: (n: number, of: number) =>
+    of === 0 ? "never opened" : `${n}/${of} opened`,
+  unsubscribe: "Unsubscribe",
+  unsubscribing: "Unsubscribing…",
+  unsubscribed: "Unsubscribed",
+  unsubscribeFailed: "Unsubscribe failed",
+  unsubscribeMailto: "Unsubscribe by email",
+  archiveAll: "Archive all",
+  archived: (n: number) => `Archived ${n} message${n === 1 ? "" : "s"}`,
+  undo: "Undo",
+
+  // -- Phase 4: compose (FR-17/18)
+  compose: "Compose",
+  composeTitle: "New message",
+  replyTitle: "Reply",
+  to: "To",
+  cc: "Cc",
+  subject: "Subject",
+  send: "Send",
+  sending: "Sending…",
+  draftSaved: "Draft saved",
+  sendFailed: "Send failed",
+  queuedOffline: "Queued — will send when connected",
+
+  // -- Phase 4: AI (FR-20..25)
+  aiSection: "On-device AI",
+  aiMasterSwitch: "Enable AI features",
+  aiTier: "Model tier",
+  aiTierAuto: "Auto",
+  aiModelDownload: "Download model",
+  aiModelDownloading: "Downloading…",
+  aiModelDelete: "Delete model",
+  aiModelReady: "Model ready",
+  aiSummarize: "Summarize",
+  aiSummarizing: "Summarizing…",
+  aiDraftReply: "Draft reply (AI)",
+  aiInstruction: "How should the reply sound?",
+  aiEngine: "Engine",
+  aiKeyPlaceholder: "API key (stored in Credential Manager)",
+  aiKeySet: "key saved",
+  aiSaveKey: "Save key",
+  aiFallback: "API unreachable — used the local model instead",
+  aiDisabledHint: "Enable AI in Settings to use summaries and drafts",
+  aiCostNote:
+    "Runs on your machine. Downloads a ~1–3 GB model from HuggingFace once. No mail content leaves your device unless you configure a cloud API key.",
+
+  // -- Phase 4: tracking badges (FR-15)
+  blockedTrackers: (n: number) => `Blocked ${n} tracker${n === 1 ? "" : "s"}`,
+  showImages: "Show images",
+  showImagesAlways: "Always for this sender",
+  imagesAllowedNote:
+    "Loading remote images reveals your IP address to the sender.",
+
+  // -- Phase 4/5: settings + MCP (FR-26/27)
+  settings: "Settings",
+  settingsAccounts: "Accounts",
+  settingsAi: "AI",
+  settingsMcp: "MCP (developer agents)",
+  settingsGeneral: "General",
+  settingsSearch: "Also search the mail server",
+  mcpAllowSend: "Allow agents to send email (two-step)",
+  mcpRegister: "Add to",
+  mcpRegistered: "Registered — restart the client to see it",
+  mcpAudit: "Agent activity log",
+  settingsStorage: "Storage",
+  diagnostics: "Diagnostics",
+  diagnosticsHosts: "Hosts contacted this session",
+  storageDb: "Mail database",
+  storageModels: "AI models",
+  noHosts: "No remote hosts contacted this session",
+  onboardingAiTitle: "On-device AI",
+  onboardingAiBody: S_aiBody(),
+  onboardingAccept: "Enable (recommended)",
+  onboardingDecline: "Not now",
+  onboardingNext: "Add your first account",
 } as const;
+
+function S_aiBody(): string {
+  return (
+    "cracktivity can summarize threads and draft replies with a small AI " +
+    "model that runs entirely on your PC. It costs about 1–3 GB of disk " +
+    "space and 1–4 GB of RAM while in use. Nothing is sent anywhere."
+  );
+}

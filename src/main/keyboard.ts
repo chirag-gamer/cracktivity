@@ -14,6 +14,8 @@ export interface KeyboardActions {
   archive: () => void;
   toggleUnread: () => void;
   toggleStar: () => void;
+  compose: () => void;
+  reply: () => void;
   focusSearch: () => void;
   toggleOverlay: () => void;
   togglePalette: () => void;
@@ -84,6 +86,14 @@ export function useKeyboard(actions: KeyboardActions, enabled = true): void {
         case "s":
           e.preventDefault();
           a.toggleStar();
+          break;
+        case "c":
+          e.preventDefault();
+          a.compose();
+          break;
+        case "r":
+          e.preventDefault();
+          a.reply();
           break;
         case "/":
           e.preventDefault();

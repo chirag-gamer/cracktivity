@@ -46,24 +46,26 @@ Consolidates the document inventory and the phased task list. Updated continuous
 6. First-run AI opt-in dialog + model manager download/resume/verify (FR-20) — download only, no inference yet. **open** (deferred with compose per D-025).
 7. Verify: **V-3.1** L5 e2e **seeded legs GREEN 4/4** (2026-11-05 local Win11: hydration from encrypted cache → j/keyboard open reader → Ctrl+1 account switch → `/`+FTS5 search; WDIO + @wdio/tauri-service 1.5.1, v9-pinned, external tauri-driver 2.1.0, `--e2e-seed` idempotent); onboarding-dialog/add-account-UI and send/reply legs deferred with compose (D-025); **V-3.2** FlaUI Alt-Tab/hotkey — manual gate, recipe implemented; **V-3.3** low-end transparent-panel perf — open (D-011 gate); **V-3.4** FTS < 1 s @ 100k — open (benchmark harness TODO; L1/L3 cover correctness); **V-3.5** real Gmail/Outlook round-trip — open (needs user accounts; Outlook also blocked on the Entra registration, V-2.4).
 
-### Phase 4 — Remaining approved features — ☐
-1. Importance/Other: ~~rule engine~~ + counters + correction learning; split views (FR-11..12). **partial (shipped in Phase 3, D-025)**: rules + per-sender corrections + Important/Other tabs live; remaining: opened/deleted counters feeding the rules, the optional learned layer, and the V-4.1 ≥ 90 % seeded-batch gate.
-2. Follow-ups ("Waiting for Reply") + one-click follow-up draft (FR-13).
-3. Subscription cleanup view: sender ranking, RFC 8058 POST (with DKIM-header caveat handling) / mailto fallback, bulk archive + Undo (FR-14).
-4. Tracker blocking full pipeline (ammonia→lol_html→link-clean→sandbox iframe) + per-sender allowlist + badges (FR-15, FR-19).
-5. AI inference: ChatEngine over llama-server sidecar; summarize + draft streaming; hardware tiering + override (FR-21..23); BYO keys (OpenAI/Anthropic/xAI) with fallback chain (FR-24); master switch (FR-25).
-6. MCP server: rmcp tools, safety model, one-click client registration, audit log (FR-26..27).
-7. Server-side search toggle merging uncached results (FR-9 completion).
-8. Verify: **V-4.1** classification seeded-batch ≥ 90% rules-only + zero-egress test (FR-12); **V-4.2** follow-up clock-injection test; **V-4.3** unsubscribe flow against fixture server (POST only on click; Undo restores); **V-4.4** render pipeline: no script exec/no external request on tracked fixture, allowlist overrides; **V-4.5** AI golden-file suite (tiny GGUF) + latency budgets on MID hardware; **V-4.6** MCP suite: handshake (2026-07-28 + handshake-era fixture), read-only default, send-gate two-step, audit log; **V-4.7** real-client MCP check (Claude Desktop/Cursor) manual evidence.
+### Phase 4 — Remaining approved features — ✅ core done 2026-11-05 (V-4.5 golden-file + V-4.7 real-client evidence outstanding)
+0. Phase-3 carry-in prerequisites: compose/reply/drafts + SMTP send + Sent APPEND (FR-17/18) and first-run AI opt-in + model manager (FR-20). **done** — lettre submission (465 implicit TLS / 587 STARTTLS), Sent APPEND + local mirror, outbox statuses with retryable failures; onboarding dialog (checkbox ON) streams the pinned-model download.
+1. Follow-ups (FR-13). **done** — driver syncs the Sent folder (headers-only), `waiting_for_reply` is a pure `now`-injected query (V-4.2 covered by `followups_respect_injected_clock_and_clear_on_reply` + the L3 `sent_sync_feeds_the_followup_view`), the view + one-click pre-filled draft are live; threshold is user-set 1/2/3/5/7, default 3.
+2. Subscription cleanup (FR-14). **done** — `messages.opened_at` latch (V3) credits `sender_stats.opened` exactly once; ranking never-opened-first; RFC 8058 POST fires ONLY on click (`one_click` refuses non-POST-advertised, insecure, redirecting endpoints; **V-4.3 wire contract pinned against a real TLS fixture server**); mailto fallback via ShellExecuteW; bulk archive returns undo refs and Undo MOVEs back server-side (L1 click-isolation test).
+3. Tracker blocking full pipeline (FR-15/19). **done** — ammonia → lol_html (`data-blocked-src` placeholder, 1×1-pixel + curated-domain heuristics → `tracking_count`, srcset always dropped) → sandboxed iframe with per-render CSP; per-sender allowlist (V5 `sender_stats.show_images`) + per-message override route allowed images through the loopback fetch proxy (no referer/cookies, token-gated, 10 MB cap); tracker pixels stay blocked even when allowed. **V-4.4** covered by 9 render tests.
+4. AI inference (FR-21..25). **done** — model manager with frozen rev+size+sha256 pins (D-031), resumable Range downloads with checksum enforcement (fixture-tested); tiering from RAM/cores with override; llama-server sidecar (b12110 flags verified live, D-030); ChatEngine over llama-server + OpenAI-compat + Anthropic native (L7 wire-contract tests for both SSE shapes); summarize (map-reduce within the 8k budget, quote stripping) and draft streaming through Tauri Channels; BYO keys in Credential Manager with the FR-24 local-fallback notice; master switch kills the sidecar. **V-4.5 golden-file run with a real tiny GGUF + latency budgets remain open** (sidecar binary is not committed; `scripts/fetch-llama.mjs` fetches it).
+5. MCP server (FR-26/27). **done** — rmcp 3.9 stdio server (`cracktivity.exe --mcp`, stdout protocol-only), 8 tools; read-only default (**V-4.6: handshake + toolset + gate tests green over an in-process duplex**), two-step gated send with a single-use confirm token bound to the content fingerprint, per-hour rate limit, append-only audit rows, code redaction (6–8 digit runs), nonce-fenced bodies with escape-proofing, Spam/Trash excluded structurally (inbox-role joins); one-click registration for Claude Desktop (incl. MSIX LocalCache probe), Claude Code, Codex (TOML), Cursor with .bak backups and unknown-key preservation (L1-tested).
+6. Server-side search (FR-9 completion). **done** — `uid_search` on the transport (mock + io-imap), off-runtime expansion ingesting headers under a short lock, `search.also_server` setting, results marked uncached via `has_body = false`.
+7. Importance counters + V-4.1. **done** — 50-message seeded batch classifies 100% by rules alone (`seeded_batch_classifies_at_least_90_percent`, with the ≥90% gate as the AC); zero egress is structural (pure classify function, no network path).
+8. Frontend. **done** — Follow-ups view, Cleanup view (unsubscribe/archive/undo), Composer (autosave, Ctrl+Enter, streaming AI draft, failure reason), Settings (AI master switch/tier/engine/keys/download, MCP gate + registrations + audit, follow-up days, server search), Onboarding dialog (once, checkbox ON), reader AI bar + tracking badge + Show images; `c` compose / `r` reply keys; 37 L1 tests green.
+9. Verify: **V-4.1 ✅** · **V-4.2 ✅** · **V-4.3 ✅** · **V-4.4 ✅** · **V-4.6 ✅** (all automated, evidence in test names) · **V-4.5** open (golden-file + latency on real hardware — needs the fetched sidecar + a tiny GGUF) · **V-4.7** open (manual: register into Claude Desktop/Cursor and exercise the tools).
 
-### Phase 5 — Settings, onboarding, usability & accessibility — ☐
-1. Settings surface: accounts, AI (tier/override/keys/master switch), MCP, privacy defaults, appearance, shortcuts/keymap themes, storage.
-2. Onboarding polish: first-run sequence (AI opt-in → add first account → done state); provider help deep-links.
+### Phase 5 — Settings, onboarding, usability & accessibility — ◐ (core done 2026-11-05)
+1. Settings surface: accounts, AI (tier/override/keys/master switch), MCP, privacy defaults, appearance, shortcuts/keymap themes, storage. **done (core)** — AI/MCP/general/diagnostics sections live (master switch, tier+engine selects, BYO keys, model download/delete, mcp.allow_send gate + registrations + audit tail, follow-up days, server-search toggle, session host list, storage usage); appearance/keymap-theme tabs still open.
+2. Onboarding polish: first-run sequence (AI opt-in → add first account → done state); provider help deep-links. **done (core)** — dialog shows once (onboarding.completed), checkbox ON streams the model download, flows into add-account; provider deep-links already in the add-account dialog (D-021).
 3. Accessibility pass: full keyboard map audit, UIA labels, focus rings, OS text scaling (NFR-4); hotkey configurability incl. IME-conflict note (FR-28).
-4. Diagnostics: log viewer, session host list (FR-32 evidence), storage usage + cache prune controls.
-5. Verify: **V-5.1** keyboard-only walkthrough of every FR flow; **V-5.2** diagnostics egress audit matches allowlist exactly; **V-5.3** fresh-VM manual onboarding ≤ 5 min (success criterion 1).
+4. Diagnostics: log viewer, session host list (FR-32 evidence), storage usage + cache prune controls. **partial** — session host list (netlog wired at every egress point) + storage usage (DB + models) live; local log viewer + cache prune controls open.
+5. Verify: **V-5.1** keyboard-only walkthrough of every FR flow (open; new keys c/r tested at L1); **V-5.2** diagnostics egress audit matches allowlist exactly (hosts list implemented; the audit comparison is open); **V-5.3** fresh-VM manual onboarding ≤ 5 min (open).
 
-### Phase 6 — Stabilization & release — ☐
+### Phase 6 — Stabilization & release — ☐ (packaging prep done: NSIS per-user + embedBootstrapper pinned in tauri.conf.json; llama fetch script added)
 1. Performance & memory pass vs NFR-1/2 budgets; leak checks (long IDLE sessions, 24h soak).
 2. Updater end-to-end (signed artifact, latest.json, OFF-by-default check, FR-34); NSIS installer finalization; icon/branding.
 3. Code signing decision execution (Azure Artifact Signing if eligible, else OV) + SmartScreen guidance in README (D-016).
@@ -84,30 +86,30 @@ Consolidates the document inventory and the phased task list. Updated continuous
 | FR-6 Backfill | §4 | 2.3 | V-2.1, V-3.5 |
 | FR-7 Incremental sync | §4 | 2.3 | V-2.1, V-2.2 |
 | FR-8 Offline | §3,§4,§11 | 3.3 | V-3.1, V-2.3 — **read/search offline verified** (L1/L2, all queries cache-only); queue-send lands with compose |
-| FR-9 Search | §3,§4 | 3.3, 4.7 | V-3.4 (open); **local FTS5 done** (quoted-prefix queries, L1+L2+L3) |
+| FR-9 Search | §3,§4 | 3.3, 4.7 | V-3.4 (open); **done local + server toggle** (FTS5 L1–L3; server expansion off-runtime, uncached rows marked) |
 | FR-10 Attachments | §4.5 | 3.2 | V-3.1 |
 | FR-11 Important/Other | §4,D-013 | 3.2 (pulled fwd, D-025), 4.1 | V-4.1 (batch ≥90%); **rules + corrections live** (7 unit + sync-integration tests; AC cases 1–3 covered) |
 | FR-12 On-device classify | D-013 | 3.2 (pulled fwd), 4.1 | V-4.1 (zero-egress audit open); rules-only, no network path exists in classify |
-| FR-13 Follow-ups | §3 | 4.2 | V-4.2 |
-| FR-14 Subscription cleanup | §4 | 4.3 | V-4.3 |
-| FR-15 Tracking badges | §8 | 4.4 | V-4.4 |
+| FR-13 Follow-ups | §3 | 4.2 | **V-4.2 ✅** (clock-injected query + L3 sent-sync test); view + pre-filled draft live |
+| FR-14 Subscription cleanup | §4 | 4.3 | **V-4.3 ✅** (TLS fixture wire contract; POST only on click — L1; Undo via server MOVE-back) |
+| FR-15 Tracking badges | §8 | 4.4 | **V-4.4 ✅** (pixel+domain heuristics; badge; allowlist keeps trackers blocked) |
 | FR-16 Threads | §4 | 3.1 | V-3.1 — **threaded list/reader done** (JWZ from Phase 2; list+reader L1/L2 tested) |
-| FR-17 Compose/drafts | §4 | 3.2 | V-3.1 |
-| FR-18 SMTP send | §4.6 | 3.2 | V-3.5 |
+| FR-17 Compose/drafts | §4 | 3.2, 4.0 | **done** (drafts CRUD + autosave + outbox; L1 composer tests; kill-safe restore via drafts table) |
+| FR-18 SMTP send | §4.6 | 4.0 | **done** (lettre 465/587, Sent APPEND + local mirror; live submit is V-3.5/L4) |
 | FR-19 Remote content | §8 | 4.4 | V-4.4 |
-| FR-20 AI opt-in | §6.5 | 3.6 (open, D-025) | V-3.1 dialog leg deferred with compose |
-| FR-21 Summarize | §6 | 4.5 | V-4.5 |
-| FR-22 Draft assist | §6 | 4.5 | V-4.5 |
-| FR-23 Tiering | §6.1 | 4.5 | V-4.5 |
-| FR-24 BYO keys | §6.3 | 4.5 | V-4.5 |
-| FR-25 AI switch | §6.6 | 4.5 | V-4.5 |
-| FR-26 MCP server | §9 | 4.6 | V-4.6, V-4.7 |
-| FR-27 MCP safety | §9,§10 | 4.6 | V-4.6 |
+| FR-20 AI opt-in | §6.5 | 4.0 | **done** (once-only dialog, checkbox ON; resumable+verified download, fixture-tested) |
+| FR-21 Summarize | §6 | 4.5 | streaming + map-reduce + budgets (unit-tested); **V-4.5 golden-file run open** |
+| FR-22 Draft assist | §6 | 4.5 | streams into the composer, never auto-sends (L1); **V-4.5 golden-file run open** |
+| FR-23 Tiering | §6.1 | 4.5 | **done** (RAM/cores → LOW/MID/HIGH, override, tested boundaries) |
+| FR-24 BYO keys | §6.3 | 4.5 | **done** (keys in Credential Manager; fallback→local with visible notice; SSE contract tests) |
+| FR-25 AI switch | §6.6 | 4.5 | **done** (off → sidecar killed + affordances hidden, L1-tested) |
+| FR-26 MCP server | §9 | 4.6 | **V-4.6 ✅** (duplex handshake + toolset); **V-4.7 real-client check open** |
+| FR-27 MCP safety | §9,§10 | 4.6 | **V-4.6 ✅** (read-only default, two-step single-use token gate, rate limit, audit, redaction, fencing) |
 | FR-28 Notch panel | §7 | 3.4 | V-3.2 (FlaUI manual gate — recipe implemented), V-3.3 (open); **panel v1 done** (D-011 recipe + triage UI, L1-tested) |
 | FR-29 Main window | §2,G | 3.1 | V-3.1 — **three-pane shell done** (virtualized list, sandboxed reader, light/dark follows system) |
 | FR-30 Keyboard | G | 3.5 | V-3.1 (seeded legs), V-5.1 — **full keymap live** (j/k/Enter/e/u/s///?/Ctrl+K/Ctrl+1..9, L1 6-test contract) |
 | FR-31 Tray | G | 3.5 | V-3.1 — **tray done** (menu: Open/Check/Quit; left-click toggles panel); badge overlay deferred (tooltip carries count) |
-| FR-32 Allowlist/no-telemetry | §10,D-015 | 5.4 | V-5.2 |
+| FR-32 Allowlist/no-telemetry | §10,D-015 | 5.4 | hosts list live (netlog at every egress point); V-5.2 audit comparison open |
 | FR-33 Encrypted cache | §5,§10 | 2.1 | V-2.5, Phase-6 task-4 failure drills |
 | FR-34 Updates | §10,D-016 | 6.2 | V-6.2 |
 

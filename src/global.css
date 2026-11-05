@@ -410,3 +410,166 @@ body.collapsed .panel-shell {
   background: rgba(128, 128, 128, 0.4);
   border-radius: 5px;
 }
+
+/* ------------------------------------------------------- Phase 4 additions */
+
+.nav-tools {
+  margin-top: auto;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  padding-top: 4px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.undo-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(0, 120, 212, 0.15);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(640px, 90vw);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 16px;
+  background: var(--colorNeutralBackground1, #fff);
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+.composer-head {
+  font-weight: 600;
+}
+
+.composer .field {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.primary-button {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: none;
+  background: #0f6cbd;
+  color: #fff;
+  cursor: pointer;
+}
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error-hint {
+  color: #c50f1f;
+}
+
+.settings section {
+  margin-bottom: 20px;
+}
+.settings h3 {
+  margin: 8px 0;
+}
+.settings .field-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.settings .hint {
+  opacity: 0.7;
+}
+.settings input[type="password"] {
+  flex: 1;
+  min-width: 160px;
+}
+
+.audit {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 4px;
+}
+.audit-row {
+  display: flex;
+  gap: 10px;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+}
+.audit-time {
+  opacity: 0.6;
+  white-space: nowrap;
+}
+.audit-actor {
+  font-weight: 600;
+}
+
+.badge-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 2px 0 6px;
+}
+.badge {
+  color: #b45309;
+}
+
+.ai-bar {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+.ai-summary {
+  white-space: pre-wrap;
+  background: rgba(0, 120, 212, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 4px 0;
+  font: inherit;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 100;
+}
+.overlay-card {
+  width: min(520px, 90vw);
+  padding: 20px;
+  background: var(--colorNeutralBackground1, #fff);
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.overlay-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}

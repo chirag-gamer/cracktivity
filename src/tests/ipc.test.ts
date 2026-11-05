@@ -73,6 +73,8 @@ describe("ipc client", () => {
       password: "pw",
       imapHost: null,
       imapPort: null,
+      smtpHost: null,
+      smtpPort: null,
     });
   });
 });

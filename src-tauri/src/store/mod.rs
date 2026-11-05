@@ -35,6 +35,9 @@ pub enum StoreError {
     /// The database is locked beyond the busy timeout (another writer holds it).
     #[error("database is locked (busy_timeout {0} ms elapsed)")]
     Busy(i64),
+    /// A requested row (draft, message, …) does not exist.
+    #[error("row not found")]
+    NotFound,
 }
 
 #[derive(Debug)]

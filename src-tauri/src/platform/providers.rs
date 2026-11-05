@@ -22,6 +22,10 @@ pub struct Provider {
     pub domains: &'static [&'static str],
     pub imap_host: &'static str,
     pub imap_port: u16,
+    /// SMTP submission endpoint (FR-18). Port 465 = implicit TLS, 587 =
+    /// STARTTLS (spec §4.6); both verified per provider documentation.
+    pub smtp_host: &'static str,
+    pub smtp_port: u16,
     pub auth: AuthKind,
     /// Where the user creates the app password (guided flow, spec §5).
     /// `None` for OAuth2 and generic accounts.
@@ -38,6 +42,8 @@ pub const GMAIL: Provider = Provider {
     domains: &["gmail.com", "googlemail.com"],
     imap_host: "imap.gmail.com",
     imap_port: 993,
+    smtp_host: "smtp.gmail.com",
+    smtp_port: 465,
     auth: AuthKind::AppPassword,
     app_password_url: Some("https://myaccount.google.com/apppasswords"),
     requires_manual_imap_enable: false,
@@ -51,6 +57,8 @@ pub const ICLOUD: Provider = Provider {
     domains: &["icloud.com", "me.com", "mac.com"],
     imap_host: "imap.mail.me.com",
     imap_port: 993,
+    smtp_host: "smtp.mail.me.com",
+    smtp_port: 587,
     auth: AuthKind::AppPassword,
     app_password_url: Some("https://account.apple.com/account/manage"),
     requires_manual_imap_enable: false,
@@ -63,6 +71,8 @@ pub const ZOHO: Provider = Provider {
     domains: &["zoho.com"],
     imap_host: "imap.zoho.com",
     imap_port: 993,
+    smtp_host: "smtp.zoho.com",
+    smtp_port: 465,
     auth: AuthKind::AppPassword,
     app_password_url: Some("https://accounts.zoho.com/home#security/appPasswords"),
     requires_manual_imap_enable: true,
@@ -75,6 +85,8 @@ pub const YAHOO: Provider = Provider {
     domains: &["yahoo.com"],
     imap_host: "imap.mail.yahoo.com",
     imap_port: 993,
+    smtp_host: "smtp.mail.yahoo.com",
+    smtp_port: 465,
     auth: AuthKind::AppPassword,
     app_password_url: Some("https://login.yahoo.com/account/security"),
     requires_manual_imap_enable: false,
@@ -87,6 +99,8 @@ pub const OUTLOOK: Provider = Provider {
     domains: &["outlook.com", "hotmail.com", "live.com", "msn.com"],
     imap_host: "outlook.office365.com",
     imap_port: 993,
+    smtp_host: "smtp-mail.outlook.com",
+    smtp_port: 587,
     auth: AuthKind::OAuth2,
     app_password_url: None,
     requires_manual_imap_enable: true,
@@ -101,6 +115,8 @@ pub const GENERIC: Provider = Provider {
     domains: &[],
     imap_host: "", // user-supplied
     imap_port: 993,
+    smtp_host: "", // user-supplied
+    smtp_port: 587,
     auth: AuthKind::AppPassword,
     app_password_url: None,
     requires_manual_imap_enable: false,

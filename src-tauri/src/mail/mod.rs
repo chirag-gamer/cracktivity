@@ -5,6 +5,8 @@ pub mod actions;
 pub mod headers;
 pub mod imap;
 pub mod mock;
+pub mod smtp;
 pub mod sync;
 pub mod thread;
 pub mod transport;
+pub mod unsubscribe;

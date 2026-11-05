@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use super::transport::{
-    BodyData, FetchedMeta, FolderInfo, IdleEvent, MailTransport, SelectData, TransportError,
-    TransportResult, UidRange,
+    BodyData, FetchedMeta, FolderInfo, IdleEvent, MailTransport, SearchField, SelectData,
+    TransportError, TransportResult, UidRange,
 };
 
 #[derive(Debug, Clone)]
@@ -247,14 +247,63 @@ impl MailTransport for MockTransport {
         }
     }
 
-    fn append(
-        &mut self,
-        _mailbox: &str,
-        _message: &[u8],
-        _flags: &[String],
-    ) -> TransportResult<u32> {
+    fn append(&mut self, mailbox: &str, message: &[u8], flags: &[String]) -> TransportResult<u32> {
         self.tick()?;
         self.next_append_uid += 1;
-        Ok(self.next_append_uid)
+        let uid = self.next_append_uid;
+        // A real server stores the message; the mock keeps a placeholder with
+        // the flags (raw bytes are not re-parsable into MockMessage headers).
+        let mb = self
+            .mailboxes
+            .iter_mut()
+            .find(|m| m.name == mailbox)
+            .ok_or_else(|| TransportError::Protocol(format!("no such mailbox: {mailbox}")))?;
+        mb.messages.insert(
+            uid,
+            MockMessage {
+                uid,
+                flags: flags.to_vec(),
+                headers: BTreeMap::new(),
+                thrid: None,
+                body: BodyData {
+                    text: Some(String::from_utf8_lossy(message).into_owned()),
+                    html: None,
+                },
+                internaldate_ms: 0,
+                size: message.len() as u64,
+            },
+        );
+        mb.uidnext = mb.uidnext.max(uid + 1);
+        Ok(uid)
+    }
+
+    /// In-memory substring search, case-insensitive (the server's semantics
+    /// for SEARCH SUBJECT/FROM/TO/TEXT, RFC 3501 §6.4.4).
+    fn uid_search(&mut self, field: SearchField, needle: &str) -> TransportResult<Vec<u32>> {
+        self.tick()?;
+        let mb = self.active("")?;
+        let needle = needle.to_lowercase();
+        Ok(mb
+            .messages
+            .iter()
+            .filter(|(_, m)| {
+                let h = &m.headers;
+                let haystacks: Vec<String> = match field {
+                    SearchField::Subject => {
+                        vec![h.get("subject").cloned().unwrap_or_default()]
+                    }
+                    SearchField::From => vec![h.get("from").cloned().unwrap_or_default()],
+                    SearchField::To => vec![h.get("to").cloned().unwrap_or_default()],
+                    SearchField::Text => vec![
+                        h.get("subject").cloned().unwrap_or_default(),
+                        h.get("from").cloned().unwrap_or_default(),
+                        h.get("to").cloned().unwrap_or_default(),
+                        m.body.text.clone().unwrap_or_default(),
+                    ],
+                };
+                haystacks.iter().any(|s| s.to_lowercase().contains(&needle))
+            })
+            .map(|(uid, _)| *uid)
+            .collect())
     }
 }

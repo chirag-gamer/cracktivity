@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use crate::mail::headers::{parse_address_list, parse_rfc2822_date};
 use crate::mail::thread::assign_threads;
-use crate::mail::transport::{FetchedMeta, IdleEvent, MailTransport, TransportError, UidRange};
+use crate::mail::transport::{
+    FetchedMeta, IdleEvent, MailTransport, SearchField, TransportError, UidRange,
+};
 use crate::store::dao::{self, NewMessage};
 use crate::store::Store;
 
@@ -435,6 +437,43 @@ fn fetch_new_above_watermark(
 pub fn backoff_delay(attempt: u32) -> Duration {
     let secs = 1u64.checked_shl(attempt.min(6)).unwrap_or(60);
     Duration::from_secs(secs.min(60))
+}
+
+/// Server-side search expansion (FR-9 completion): runs `UID SEARCH` on the
+/// account's inbox and returns the matched header metas — network only, no
+/// store access, so the caller can ingest them under a short lock. Caps the
+/// expansion to keep the command snappy.
+pub const SERVER_SEARCH_LIMIT: usize = 100;
+
+pub fn server_search_fetch(
+    t: &mut dyn MailTransport,
+    field: SearchField,
+    needle: &str,
+) -> Result<Vec<FetchedMeta>, SyncError> {
+    let uids = t
+        .select("INBOX")
+        .and_then(|_| t.uid_search(field, needle))?;
+    let uids: Vec<u32> = uids.into_iter().take(SERVER_SEARCH_LIMIT).collect();
+    let mut metas = Vec::new();
+    for uid in uids {
+        metas.extend(t.uid_fetch_headers(UidRange::Interval { from: uid, to: uid })?);
+    }
+    Ok(metas)
+}
+
+/// Ingests fetched header metas into the cache (classification + persist +
+/// rethread). Network-free; safe under the command-side lock.
+pub fn ingest_headers(
+    store: &Store,
+    account_id: i64,
+    folder_id: i64,
+    metas: &[FetchedMeta],
+) -> Result<usize, SyncError> {
+    let n = store_batch(store.conn(), account_id, folder_id, metas)?;
+    if n > 0 {
+        rethread(store, account_id)?;
+    }
+    Ok(n)
 }
 
 #[cfg(test)]

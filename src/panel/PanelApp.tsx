@@ -110,6 +110,8 @@ export function PanelApp() {
         const m = queueRef.current[idx];
         if (m) void ipc.setStarred(m.id, !m.starred).then(refresh).catch(() => {});
       },
+      compose: () => {},
+      reply: () => {},
       focusSearch: () => {},
       toggleOverlay: () => {},
       togglePalette: () => void openMain(),

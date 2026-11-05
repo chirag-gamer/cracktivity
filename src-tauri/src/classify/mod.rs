@@ -276,3 +276,99 @@ mod tests {
         assert_eq!(classify(&m, &ctx()).importance, Importance::Important);
     }
 }
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use crate::store::dao::Addr;
+
+    /// V-4.1 (plan): a 50-message seeded batch — newsletters, personal mail,
+    /// security notices, cc-only traffic — classifies correctly by rules
+    /// alone, ≥ 90% (PRD success criterion 2). Zero egress is structural:
+    /// `classify` is a pure function with no network path (FR-12).
+    #[test]
+    fn seeded_batch_classifies_at_least_90_percent() {
+        let cx = ClassifyContext {
+            my_addresses: vec!["me@example.com".into()],
+            sender_overrides: HashMap::new(),
+            two_way_senders: vec![],
+        };
+        let mk = |subject: &str, from: &str, to: &str, unsub: bool| NewMessage {
+            subject: Some(subject.into()),
+            from: Some(vec![Addr {
+                name: None,
+                email: from.into(),
+            }]),
+            to: Some(vec![Addr {
+                name: None,
+                email: to.into(),
+            }]),
+            list_unsubscribe: unsub.then(|| "<https://x.example/u>".into()),
+            ..Default::default()
+        };
+
+        let mut expected = Vec::new();
+        // 20 newsletters (bulk-shaped) → Other.
+        for _i in 0..20 {
+            expected.push((
+                mk(
+                    "Weekly digest",
+                    "news@corp.example",
+                    " undisclosed-recipients;",
+                    true,
+                ),
+                Importance::Other,
+            ));
+        }
+        // 15 personal, directly addressed → Important.
+        for i in 0..15 {
+            expected.push((
+                mk(
+                    &format!("Question {i}"),
+                    &format!("p{i}@example.org"),
+                    "me@example.com",
+                    false,
+                ),
+                Importance::Important,
+            ));
+        }
+        // 10 security notices → Important.
+        for _i in 0..10 {
+            expected.push((
+                mk(
+                    "Your verification code",
+                    "no-reply@svc.example",
+                    "me@example.com",
+                    false,
+                ),
+                Importance::Important,
+            ));
+        }
+        // 5 cc-only team mail → Other.
+        for i in 0..5 {
+            expected.push((
+                mk(
+                    &format!("Team update {i}"),
+                    "boss@example.net",
+                    "all@example.net",
+                    false,
+                ),
+                Importance::Other,
+            ));
+        }
+
+        let total = expected.len();
+        let correct = expected
+            .iter()
+            .filter(|(m, want)| classify(m, &cx).importance == *want)
+            .count();
+        let accuracy = correct as f64 / total as f64;
+        assert!(
+            accuracy >= 0.90,
+            "rules-only accuracy {accuracy:.2} ({correct}/{total})"
+        );
+        // These deterministic fixtures should be perfect; a regression below
+        // 100% means a rule changed shape.
+        assert_eq!(correct, total, "deterministic fixtures classify fully");
+    }
+}

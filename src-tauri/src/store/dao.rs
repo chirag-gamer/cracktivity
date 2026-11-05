@@ -245,7 +245,8 @@ pub fn apply_threads(
 
 // ---------------------------------------------------------------- accounts
 
-/// Fields for a new accounts row (spec §3).
+/// Fields for a new accounts row (spec §3). SMTP endpoints (V4): presets
+/// resolve theirs from `providers::ALL`; manual accounts store their own.
 pub struct NewAccount<'a> {
     pub provider: &'a str,
     pub email: &'a str,
@@ -254,6 +255,8 @@ pub struct NewAccount<'a> {
     pub credential_ref: &'a str,
     pub imap_host: Option<&'a str>,
     pub imap_port: Option<u16>,
+    pub smtp_host: Option<&'a str>,
+    pub smtp_port: Option<u16>,
 }
 
 pub fn add_account(conn: &Connection, acc: &NewAccount<'_>) -> Result<i64, StoreError> {
@@ -265,12 +268,14 @@ pub fn add_account(conn: &Connection, acc: &NewAccount<'_>) -> Result<i64, Store
         credential_ref,
         imap_host,
         imap_port,
+        smtp_host,
+        smtp_port,
     } = acc;
     let now = now_ms();
     conn.execute(
         "INSERT INTO accounts(provider, email, display_name, auth_type, credential_ref,
-                              imap_host, imap_port, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                              imap_host, imap_port, smtp_host, smtp_port, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
         params![
             provider,
             email,
@@ -279,6 +284,8 @@ pub fn add_account(conn: &Connection, acc: &NewAccount<'_>) -> Result<i64, Store
             credential_ref,
             imap_host,
             imap_port,
+            smtp_host,
+            smtp_port,
             now
         ],
     )?;
@@ -702,4 +709,186 @@ pub fn set_setting(
         params![key, serde_json::to_string(value)?, now],
     )?;
     Ok(())
+}
+
+// ------------------------------------------------------------------- drafts
+
+/// Fields for one compose draft (spec §3 `drafts`). `status` follows the
+/// outbox lifecycle: draft → queued → sending → sent/deleted (FR-17/18).
+#[derive(Debug, Clone)]
+pub struct NewDraft<'a> {
+    pub account_id: i64,
+    pub thread_id: Option<i64>,
+    pub to: &'a [Addr],
+    pub cc: &'a [Addr],
+    pub subject: &'a str,
+    pub body_text: &'a str,
+    pub in_reply_to: Option<&'a str>,
+}
+
+pub fn add_draft(conn: &Connection, d: &NewDraft<'_>) -> Result<i64, StoreError> {
+    let now = now_ms();
+    conn.execute(
+        "INSERT INTO drafts(account_id, thread_id, to_json, cc_json, subject, body_text,
+                            in_reply_to, status, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'draft', ?8, ?8)",
+        params![
+            d.account_id,
+            d.thread_id,
+            serde_json::to_string(d.to)?,
+            serde_json::to_string(d.cc)?,
+            d.subject,
+            d.body_text,
+            d.in_reply_to,
+            now
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Updates a draft's editable fields (autosave); only `draft` rows accept
+/// edits — a queued/sending/failed row is out of the user's hands.
+pub fn update_draft(
+    conn: &Connection,
+    draft_id: i64,
+    to: &[Addr],
+    cc: &[Addr],
+    subject: &str,
+    body_text: &str,
+) -> Result<(), StoreError> {
+    let n = conn.execute(
+        "UPDATE drafts SET to_json = ?2, cc_json = ?3, subject = ?4, body_text = ?5,
+                updated_at = ?6
+         WHERE id = ?1 AND status = 'draft'",
+        params![
+            draft_id,
+            serde_json::to_string(to)?,
+            serde_json::to_string(cc)?,
+            subject,
+            body_text,
+            now_ms()
+        ],
+    )?;
+    if n == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}
+
+/// Moves a draft into (or back from) a lifecycle state: queued (send
+/// requested), sending, failed (+reason), or back to draft (retry).
+pub fn set_draft_status(
+    conn: &Connection,
+    draft_id: i64,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), StoreError> {
+    let n = conn.execute(
+        "UPDATE drafts SET status = ?2, error = ?3, updated_at = ?4 WHERE id = ?1",
+        params![draft_id, status, error, now_ms()],
+    )?;
+    if n == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}
+
+pub fn delete_draft(conn: &Connection, draft_id: i64) -> Result<(), StoreError> {
+    conn.execute("DELETE FROM drafts WHERE id = ?1", params![draft_id])?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftRow {
+    pub id: i64,
+    pub account_id: i64,
+    pub thread_id: Option<i64>,
+    pub to: Vec<Addr>,
+    pub cc: Vec<Addr>,
+    pub subject: Option<String>,
+    pub body_text: Option<String>,
+    pub in_reply_to: Option<String>,
+    /// draft | queued | sending | failed
+    pub status: String,
+    pub error: Option<String>,
+    pub updated_at: i64,
+}
+
+/// Outbox + drafts, newest-touched first. `only_pending` limits to the
+/// outbox-shaped statuses (queued/sending/failed).
+pub fn list_drafts(conn: &Connection, only_pending: bool) -> Result<Vec<DraftRow>, StoreError> {
+    let sql = if only_pending {
+        "SELECT id, account_id, thread_id, to_json, cc_json, subject, body_text, in_reply_to,
+                status, error, updated_at
+         FROM drafts WHERE status IN ('queued','sending','failed')
+         ORDER BY updated_at DESC"
+    } else {
+        "SELECT id, account_id, thread_id, to_json, cc_json, subject, body_text, in_reply_to,
+                status, error, updated_at
+         FROM drafts ORDER BY updated_at DESC LIMIT 200"
+    };
+    let mut stmt = conn.prepare_cached(sql)?;
+    let rows = stmt
+        .query_map([], |r| {
+            let to: Option<String> = r.get(3)?;
+            let cc: Option<String> = r.get(4)?;
+            Ok(DraftRow {
+                id: r.get(0)?,
+                account_id: r.get(1)?,
+                thread_id: r.get(2)?,
+                to: to
+                    .and_then(|j| serde_json::from_str(&j).ok())
+                    .unwrap_or_default(),
+                cc: cc
+                    .and_then(|j| serde_json::from_str(&j).ok())
+                    .unwrap_or_default(),
+                subject: r.get(5)?,
+                body_text: r.get(6)?,
+                in_reply_to: r.get(7)?,
+                status: r.get(8)?,
+                error: r.get(9)?,
+                updated_at: r.get(10)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn draft_by_id(conn: &Connection, draft_id: i64) -> Result<Option<DraftRow>, StoreError> {
+    Ok(list_drafts(conn, false)?
+        .into_iter()
+        .find(|d| d.id == draft_id))
+}
+
+// --------------------------------------------------------------- audit log
+
+/// Appends one MCP audit row (FR-27: every mutating action is recorded,
+/// append-only). `actor` is 'mcp' or 'user' per the schema check.
+pub fn audit(
+    conn: &Connection,
+    actor: &str,
+    action: &str,
+    detail: serde_json::Value,
+) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT INTO audit_log(at, actor, action, detail_json) VALUES (?1, ?2, ?3, ?4)",
+        params![now_ms(), actor, action, serde_json::to_string(&detail)?],
+    )?;
+    Ok(())
+}
+
+/// One audit trail row: (id, at, actor, action, detail json).
+pub type AuditRow = (i64, i64, String, String, String);
+
+pub fn audit_tail(conn: &Connection, limit: i64) -> Result<Vec<AuditRow>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, at, actor, action, COALESCE(detail_json, '')
+         FROM audit_log ORDER BY id DESC LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }

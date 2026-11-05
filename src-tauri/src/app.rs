@@ -19,6 +19,7 @@ use url::Url;
 use crate::mail::actions as mail_actions;
 use crate::mail::imap::{ImapAuth, ImapTransport};
 use crate::mail::sync::{self, SyncOptions};
+use crate::mail::transport::MailTransport as _;
 use crate::platform::providers;
 use crate::store::queries::{self, ImportanceFilter, Scope};
 use crate::store::{Store, StoreError};
@@ -43,13 +44,40 @@ pub enum DriverMsg {
     Action(MessageAction),
     /// Wake one account for an immediate sync cycle.
     SyncNow(i64),
+    /// Bulk-archives every inbox message from one sender (FR-14). The reply
+    /// carries the undo references for the session's Undo.
+    BulkArchive {
+        sender: String,
+        reply: mpsc::Sender<Result<Vec<mail_actions::ArchivedRef>, String>>,
+    },
+    /// Sends a queued draft over SMTP (FR-18) on the driver thread; the reply
+    /// reports success or the reason (the outbox row keeps the error too).
+    SendDraft {
+        draft_id: i64,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum MessageAction {
-    MarkRead { message_id: i64, read: bool },
-    SetStarred { message_id: i64, starred: bool },
-    Archive { message_id: i64 },
+    MarkRead {
+        message_id: i64,
+        read: bool,
+    },
+    SetStarred {
+        message_id: i64,
+        starred: bool,
+    },
+    Archive {
+        message_id: i64,
+    },
+    /// Reverses one bulk-archive entry (FR-14 Undo): server MOVE back.
+    RestoreArchived {
+        account_id: i64,
+        from_folder: String,
+        uid: u32,
+        to_folder: String,
+    },
 }
 
 /// Everything the driver thread needs; produced together with [`AppState`].
@@ -68,26 +96,46 @@ pub struct AppState {
     store: Arc<Mutex<Store>>,
     tx: mpsc::Sender<DriverMsg>,
     statuses: Arc<Mutex<HashMap<i64, AccountStatus>>>,
+    /// Loopback image-fetch proxy for allowed remote images (spec §8.5).
+    /// `None` only if the listener could not bind — renders then fall back
+    /// to direct https loads with the honest-IP caveat.
+    proxy: Option<Arc<crate::render::proxy::ImageProxy>>,
+    /// AI runtime (models, sidecar) behind its own lock so a running
+    /// summarize/draft task does not block store queries (FR-21/22).
+    ai: Arc<Mutex<crate::ai::AiState>>,
+    /// The app data dir (D-006 split) — storage-usage diagnostics input.
+    data_dir: std::path::PathBuf,
 }
 
 impl AppState {
-    /// Opens the encrypted store in `profile_dir`. The caller spawns
+    /// Opens the encrypted store in `app_data_dir` (`profile/` inside it per
+    /// D-006; models live beside it in `models/`). The caller spawns
     /// [`driver_loop`] with the returned channels (it needs the AppHandle,
     /// which does not exist yet at store-open time).
-    pub fn new(profile_dir: &std::path::Path) -> Result<(AppState, DriverChannels), StoreError> {
+    pub fn new(app_data_dir: &std::path::Path) -> Result<(AppState, DriverChannels), StoreError> {
+        let profile_dir = app_data_dir.join("profile");
         let store = Arc::new(Mutex::new(Store::open(
-            profile_dir,
+            &profile_dir,
             crate::store::dek::DEFAULT_DEK_TARGET,
         )?));
         // Dedicated connection for the driver (see DriverChannels).
-        let driver_store = Store::open(profile_dir, crate::store::dek::DEFAULT_DEK_TARGET)?;
+        let driver_store = Store::open(&profile_dir, crate::store::dek::DEFAULT_DEK_TARGET)?;
         let (tx, rx) = mpsc::channel::<DriverMsg>();
         let statuses = Arc::new(Mutex::new(HashMap::new()));
+        let proxy = crate::render::proxy::start()
+            .map(Arc::new)
+            .map_err(StoreError::Io)?;
         Ok((
             AppState {
                 store: store.clone(),
                 tx,
                 statuses: statuses.clone(),
+                proxy: Some(proxy),
+                ai: Arc::new(Mutex::new(crate::ai::AiState::new(
+                    app_data_dir,
+                    &app_data_dir.join("resources-fallback"),
+                ))),
+                data_dir: app_data_dir.to_path_buf(),
             },
             DriverChannels {
                 rx,
@@ -97,14 +145,32 @@ impl AppState {
         ))
     }
 
+    /// Points the AI runtime at the app's real resource dir (called from
+    /// setup once the AppHandle exists).
+    pub fn set_ai_resource_dir(&self, resource_dir: &std::path::Path) {
+        if let Ok(mut ai) = self.ai.lock() {
+            ai.resource_dir = resource_dir.to_path_buf();
+        }
+    }
+
+    /// AI state handle (commands run blocking inference on it off-runtime).
+    pub fn ai_ref(&self) -> &Arc<Mutex<crate::ai::AiState>> {
+        &self.ai
+    }
+
     /// Test constructor: state over an existing store, no driver thread.
     #[cfg(test)]
     pub fn with_store(store: Store) -> AppState {
         let (tx, _rx) = mpsc::channel();
+        let proxy = crate::render::proxy::start().ok().map(Arc::new);
+        let dir = std::env::temp_dir();
         AppState {
             store: Arc::new(Mutex::new(store)),
             tx,
             statuses: Arc::new(Mutex::new(HashMap::new())),
+            proxy,
+            ai: Arc::new(Mutex::new(crate::ai::AiState::new(&dir, &dir))),
+            data_dir: dir.clone(),
         }
     }
 
@@ -232,6 +298,7 @@ fn connect(acc: &AccountRow) -> Result<ImapTransport, String> {
         }
         other => return Err(format!("unknown auth type {other}")),
     };
+    crate::platform::netlog::record(&host);
     ImapTransport::connect(&url, auth)
         .map(|(t, _caps)| t)
         .map_err(|e| e.to_string())
@@ -268,6 +335,16 @@ fn sync_cycle(
     let result = match transport.as_mut() {
         Some(t) => {
             sync::sync_folder(t, store, acc.id, "INBOX", &SyncOptions::default()).and_then(|_| {
+                // Headers-only sent sync: the FR-13 follow-up view reads the
+                // user's own latest-per-thread rows from here.
+                let sent_name = t
+                    .list_folders()?
+                    .into_iter()
+                    .find(|f| f.role == Some(crate::mail::transport::SpecialRole::Sent))
+                    .map(|f| f.name);
+                if let Some(name) = sent_name {
+                    sync::sync_folder(t, store, acc.id, &name, &SyncOptions::default())?;
+                }
                 if let Some(f) = dao::folder_state_by_name(store.conn(), acc.id, "INBOX")? {
                     sync::fetch_missing_bodies(t, store, f.id, sync::BODY_PREFETCH_LIMIT)?;
                 }
@@ -322,7 +399,7 @@ fn run_action(
         }
     }
     let Some(t) = transport.as_mut() else { return };
-    let result = match action {
+    let result: Result<(), mail_actions::ActionError> = match action {
         MessageAction::MarkRead { message_id, read } => {
             mail_actions::mark_read(t, store, message_id, read)
         }
@@ -330,7 +407,17 @@ fn run_action(
             message_id,
             starred,
         } => mail_actions::set_starred(t, store, message_id, starred),
-        MessageAction::Archive { message_id } => mail_actions::archive(t, store, message_id),
+        MessageAction::Archive { message_id } => {
+            // The single-archive path discards the undo ref; bulk undo is the
+            // only consumer (FR-14).
+            mail_actions::archive(t, store, message_id).map(|_| ())
+        }
+        MessageAction::RestoreArchived {
+            account_id: _,
+            from_folder,
+            uid,
+            to_folder,
+        } => mail_actions::restore_archived(t, &from_folder, uid, &to_folder),
     };
     match result {
         Ok(()) => {
@@ -348,6 +435,74 @@ fn run_action(
     }
 }
 
+/// Bulk-archives every inbox message from `sender` (FR-14); returns the
+/// undo references the session keeps for Undo. A failure mid-way aborts —
+/// already-archived messages stay archived (still undoable, refs returned
+/// only on success).
+fn bulk_archive(
+    store: &Store,
+    transports: &mut HashMap<i64, Option<ImapTransport>>,
+    sender: &str,
+) -> Result<Vec<mail_actions::ArchivedRef>, String> {
+    let ids = queries::sender_message_ids(store.conn(), sender).map_err(|e| e.to_string())?;
+    let mut refs = Vec::new();
+    for id in ids {
+        let acc = account_of_message(store.conn(), id).ok_or("message vanished")?;
+        let transport = transports.entry(acc.id).or_insert(None);
+        if transport.is_none() {
+            *transport = Some(connect(&acc)?);
+        }
+        let t = transport.as_mut().expect("just connected");
+        refs.push(mail_actions::archive(t, store, id).map_err(|e| e.to_string())?);
+    }
+    Ok(refs)
+}
+
+/// Runs the queued send for one draft (FR-18) on the driver thread: status
+/// transitions happen here so a killed driver never leaves a phantom
+/// `sending` row without a terminal state on retry.
+fn send_draft_via_driver(
+    store: &Store,
+    accounts: &[AccountRow],
+    transports: &mut HashMap<i64, Option<ImapTransport>>,
+    draft_id: i64,
+) -> Result<(), String> {
+    let fail = |store: &Store, msg: String| -> String {
+        let _ = dao::set_draft_status(store.conn(), draft_id, "failed", Some(&msg));
+        msg
+    };
+    let account_id: i64 = store
+        .conn()
+        .query_row(
+            "SELECT account_id FROM drafts WHERE id = ?1",
+            [draft_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| format!("draft {draft_id} vanished"))?;
+    let acc = accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| fail(store, "account is disabled".into()))?;
+    if let Err(e) = dao::set_draft_status(store.conn(), draft_id, "sending", None) {
+        return Err(e.to_string());
+    }
+    let transport = transports.entry(acc.id).or_insert(None);
+    if transport.is_none() {
+        *transport = Some(connect(acc).map_err(|e| fail(store, e))?);
+    }
+    let password = providers::get_account_secret(&acc.credential_ref)
+        .map_err(|e| fail(store, format!("credential read failed: {e}")))?;
+    crate::mail::smtp::send_draft(
+        transport.as_mut().expect("just connected"),
+        store,
+        draft_id,
+        &password,
+    )
+    .map_err(|e| fail(store, e.to_string()))
+}
+/// Returns when the command side drops (app teardown) — process exit is
+/// owned by tauri; this thread never races it with `process::exit`.
+/// `app` is `None` in unit tests.
 /// The driver thread body: blocking IMAP + SQLite, woken by channel.
 /// Returns when the command side drops (app teardown) — process exit is
 /// owned by tauri; this thread never races it with `process::exit`.
@@ -409,11 +564,41 @@ pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) {
             Ok(DriverMsg::SyncNow(id)) => {
                 next_due.remove(&id);
             }
+            Ok(DriverMsg::Action(MessageAction::RestoreArchived {
+                account_id,
+                from_folder,
+                uid,
+                to_folder,
+            })) => {
+                // Account-addressed (the local row is already gone).
+                let acc = accounts.iter().find(|a| a.id == account_id);
+                match acc {
+                    Some(acc) => run_action(
+                        app,
+                        &store,
+                        &statuses,
+                        acc,
+                        transports.entry(acc.id).or_insert(None),
+                        MessageAction::RestoreArchived {
+                            account_id,
+                            from_folder,
+                            uid,
+                            to_folder,
+                        },
+                    ),
+                    None => {
+                        if let Some(app) = app {
+                            let _ = app.emit("action-failed", "unknown account");
+                        }
+                    }
+                }
+            }
             Ok(DriverMsg::Action(action)) => {
                 let message_id = match action {
                     MessageAction::MarkRead { message_id, .. }
                     | MessageAction::SetStarred { message_id, .. }
                     | MessageAction::Archive { message_id } => message_id,
+                    MessageAction::RestoreArchived { .. } => unreachable!("handled above"),
                 };
                 let acc = account_of_message(store.conn(), message_id);
                 match acc {
@@ -434,6 +619,21 @@ pub fn driver_loop(ch: DriverChannels, app: Option<AppHandle>) {
                     }
                 }
             }
+            Ok(DriverMsg::BulkArchive { sender, reply }) => {
+                let _ = reply.send(bulk_archive(&store, &mut transports, &sender));
+                if let Some(app) = app {
+                    let _ = app.emit("store-changed", ());
+                }
+            }
+            Ok(DriverMsg::SendDraft { draft_id, reply }) => {
+                let result = send_draft_via_driver(&store, &accounts, &mut transports, draft_id);
+                if result.is_ok() {
+                    if let Some(app) = app {
+                        let _ = app.emit("store-changed", ());
+                    }
+                }
+                let _ = reply.send(result);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
@@ -452,6 +652,22 @@ fn lock_store<'a>(state: &State<'a, AppState>) -> CmdResult<std::sync::MutexGuar
         .store
         .lock()
         .map_err(|_| "store poisoned".into())
+}
+
+/// Settings read/write over the encrypted store's `settings` table
+/// (spec §3 — Credential-Manager-free app state only; no secrets here).
+fn get_setting_value(state: &State<'_, AppState>, key: &str) -> Option<serde_json::Value> {
+    let st = lock_store(state).ok()?;
+    dao::get_setting(st.conn(), key).ok().flatten()
+}
+
+fn set_setting_value(
+    state: &State<'_, AppState>,
+    key: &str,
+    value: &serde_json::Value,
+) -> CmdResult<()> {
+    let st = lock_store(state)?;
+    dao::set_setting(st.conn(), key, value).map_err(|e| e.to_string())
 }
 
 fn scope_of(account_id: Option<i64>) -> Scope {
@@ -509,37 +725,254 @@ pub async fn thread_messages(
     queries::thread_messages(st.conn(), &thrid).map_err(|e| e.to_string())
 }
 
-/// One message's body: cached text + the sanitized render (spec §8 v1).
+/// One message's body: cached text + the sanitized render (spec §8 v2).
+/// `show_images` overrides the per-sender allowlist for this render only.
 #[derive(serde::Serialize)]
 pub struct OpenedBody {
     pub text: Option<String>,
     pub html: Option<String>,
     pub blocked_images: usize,
+    pub tracking_count: usize,
     pub snippet: String,
 }
 
 #[tauri::command]
-pub async fn message_body(state: State<'_, AppState>, message_id: i64) -> CmdResult<OpenedBody> {
-    let st = lock_store(&state)?;
-    let body = queries::message_body(st.conn(), message_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("message not found")?;
-    let rendered = body.html.as_deref().map(crate::render::render_document);
+pub async fn message_body(
+    state: State<'_, AppState>,
+    message_id: i64,
+    show_images: Option<bool>,
+) -> CmdResult<OpenedBody> {
+    let (body, allow, proxy_origin) = {
+        let st = lock_store(&state)?;
+        let body = queries::message_body(st.conn(), message_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("message not found")?;
+        // First open latches and credits the sender's engagement counter (FR-14).
+        let _ = queries::mark_opened(st.conn(), message_id);
+        let allow = show_images.unwrap_or_else(|| {
+            queries::sender_show_images(st.conn(), message_id)
+                .ok()
+                .flatten()
+                .unwrap_or(false)
+        });
+        (body, allow, proxy_origin_of(&state))
+    };
+    let opts = crate::render::RenderOptions {
+        allow_remote_images: allow,
+        proxy_origin,
+    };
+    let rendered = body
+        .html
+        .as_deref()
+        .map(|h| crate::render::render_document_opts(h, &opts));
+    if let Some(r) = &rendered {
+        let st = lock_store(&state)?;
+        let _ = queries::set_tracking_count(st.conn(), message_id, r.tracking_count);
+    }
     Ok(OpenedBody {
         text: body.text,
         html: rendered.as_ref().map(|r| r.html.clone()),
         blocked_images: rendered.as_ref().map_or(0, |r| r.blocked_images),
+        tracking_count: rendered.as_ref().map_or(0, |r| r.tracking_count),
         snippet: body.snippet,
     })
 }
 
+fn proxy_origin_of(state: &State<'_, AppState>) -> Option<String> {
+    state.inner().proxy.as_ref().map(|p| p.origin.clone())
+}
+
+/// Per-sender image allowlist ("Always for this sender", FR-19 AC).
+#[tauri::command]
+pub async fn set_sender_images(
+    state: State<'_, AppState>,
+    message_id: i64,
+    allow: bool,
+) -> CmdResult<()> {
+    let st = lock_store(&state)?;
+    let addr = queries::message_address(st.conn(), message_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("message not found")?;
+    let sender = addr.sender_email.ok_or("message has no sender")?;
+    queries::set_sender_show_images(st.conn(), addr.account_id, &sender, allow)
+        .map_err(|e| e.to_string())
+}
+
+/// Local FTS search, optionally extended with server-side IMAP SEARCH over
+/// uncached ranges (FR-9 completion). Server rows are ingested into the
+/// cache (headers-only) and show up with `has_body = false`.
 #[tauri::command]
 pub async fn search_messages(
     state: State<'_, AppState>,
     query: String,
+    also_server: Option<bool>,
 ) -> CmdResult<Vec<queries::SearchRow>> {
+    let local = {
+        let st = lock_store(&state)?;
+        queries::search(st.conn(), &query, 200).map_err(|e| e.to_string())?
+    };
+    let want_server = also_server.unwrap_or(false)
+        && get_setting_value(&state, "search.also_server")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+    if !want_server || query.trim().is_empty() {
+        return Ok(local);
+    }
+    // Server expansion runs off the async runtime (blocking IMAP).
+    let st_state = state.inner().clone();
+    let query_owned = query.clone();
+    tauri::async_runtime::spawn_blocking(move || server_search_expand(&st_state, &query_owned))
+        .await
+        .map_err(|e| e.to_string())??;
     let st = lock_store(&state)?;
     queries::search(st.conn(), &query, 200).map_err(|e| e.to_string())
+}
+
+/// Connects to each enabled account, runs IMAP SEARCH, and ingests the
+/// matches (headers-only) so the local FTS view merges them marked uncached.
+/// Individual account failures are skipped — server search is best-effort.
+fn server_search_expand(state: &AppState, query: &str) -> Result<(), String> {
+    use crate::mail::transport::SearchField;
+    let accounts: Vec<AccountRow> = {
+        let st = state.store.lock().map_err(|_| "store poisoned")?;
+        enabled_accounts(st.conn())
+    };
+    for acc in accounts {
+        let metas = (|| -> Result<Vec<_>, String> {
+            let mut t = connect(&acc)?;
+            crate::mail::sync::server_search_fetch(&mut t, SearchField::Text, query)
+                .map_err(|e| e.to_string())
+        })();
+        let Ok(metas) = metas else { continue };
+        if metas.is_empty() {
+            continue;
+        }
+        let st = state.store.lock().map_err(|_| "store poisoned")?;
+        let folder = dao::folder_state_by_name(st.conn(), acc.id, "INBOX")
+            .map_err(|e| e.to_string())?
+            .ok_or("no inbox folder")?;
+        crate::mail::sync::ingest_headers(&st, acc.id, folder.id, &metas)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Follow-up threshold in days (FR-13: default 3, user-set 1/2/3/5/7).
+const FOLLOWUP_DAYS_KEY: &str = "followup.days";
+
+#[tauri::command]
+pub async fn followups_list(
+    state: State<'_, AppState>,
+    account_id: Option<i64>,
+) -> CmdResult<Vec<queries::FollowupRow>> {
+    let days = get_setting_value(&state, FOLLOWUP_DAYS_KEY)
+        .and_then(|v| v.as_i64())
+        .unwrap_or(3);
+    let now = dao::now_ms();
+    let st = lock_store(&state)?;
+    queries::waiting_for_reply(st.conn(), scope_of(account_id), now, days.clamp(1, 7), 100)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_followup_days(state: State<'_, AppState>, days: i64) -> CmdResult<()> {
+    set_setting_value(
+        &state,
+        FOLLOWUP_DAYS_KEY,
+        &serde_json::json!(days.clamp(1, 7)),
+    )
+}
+
+/// The subscription-cleanup ranking (FR-14).
+#[tauri::command]
+pub async fn cleanup_list(state: State<'_, AppState>) -> CmdResult<Vec<queries::SubscriptionRow>> {
+    let st = lock_store(&state)?;
+    queries::subscription_senders(st.conn()).map_err(|e| e.to_string())
+}
+
+/// One-click unsubscribe — invoked ONLY by the user's click (FR-14 AC). The
+/// RFC 8058 POST carries no credentials and refuses redirects.
+#[tauri::command]
+pub async fn unsubscribe_sender(
+    state: State<'_, AppState>,
+    sender: String,
+    list_unsubscribe: String,
+    list_unsub_post: Option<String>,
+) -> CmdResult<u16> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::mail::unsubscribe::one_click(&list_unsubscribe, list_unsub_post.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let status = result.map_err(|e| e.to_string())?;
+    let st = lock_store(&state)?;
+    dao::audit(
+        st.conn(),
+        "user",
+        "unsubscribe",
+        serde_json::json!({ "sender": sender, "status": status }),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(status)
+}
+
+#[derive(serde::Serialize)]
+pub struct BulkArchiveResult {
+    pub archived: usize,
+    pub undo: Vec<mail_actions::ArchivedRef>,
+}
+
+/// Bulk archive of one sender's inbox mail (FR-14). The driver performs the
+/// server MOVEs; the undo references live in the frontend session.
+#[tauri::command]
+pub async fn bulk_archive_sender(
+    state: State<'_, AppState>,
+    sender: String,
+) -> CmdResult<BulkArchiveResult> {
+    let (tx, rx) = mpsc::channel();
+    state
+        .inner()
+        .send(DriverMsg::BulkArchive { sender, reply: tx });
+    let undo = tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(std::time::Duration::from_secs(120))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    Ok(BulkArchiveResult {
+        archived: undo.len(),
+        undo,
+    })
+}
+
+/// Session Undo (FR-14 AC: bulk archive is reversible within the session):
+/// MOVEs every reference back on the server; sync re-fetches the messages.
+#[tauri::command]
+pub async fn undo_bulk_archive(
+    state: State<'_, AppState>,
+    undo: Vec<mail_actions::ArchivedRef>,
+) -> CmdResult<()> {
+    for r in undo {
+        state
+            .inner()
+            .send(DriverMsg::Action(MessageAction::RestoreArchived {
+                account_id: r.account_id,
+                from_folder: r.from_folder,
+                uid: r.new_uid,
+                to_folder: r.to_folder,
+            }));
+    }
+    Ok(())
+}
+
+/// Marks a message opened (reader latch; FR-14 counters) — the reader calls
+/// this after `message_body` when it renders text-only bodies too.
+#[tauri::command]
+pub async fn message_opened(state: State<'_, AppState>, message_id: i64) -> CmdResult<()> {
+    let st = lock_store(&state)?;
+    queries::mark_opened(st.conn(), message_id).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -609,6 +1042,7 @@ pub async fn set_importance(
 /// Adds an account (FR-1): preset or manual IMAP; the app password goes to
 /// Credential Manager only; the driver wakes immediately.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn add_account(
     state: State<'_, AppState>,
     app: AppHandle,
@@ -617,6 +1051,8 @@ pub async fn add_account(
     password: String,
     imap_host: Option<String>,
     imap_port: Option<u16>,
+    smtp_host: Option<String>,
+    smtp_port: Option<u16>,
 ) -> CmdResult<queries::AccountSummary> {
     let email_clean = email.trim().to_string();
     if !email_clean.contains('@') {
@@ -636,6 +1072,11 @@ pub async fn add_account(
     if preset.id == "generic" && imap_host.as_deref().is_none_or(|h| h.trim().is_empty()) {
         return Err("manual accounts need the IMAP server host".into());
     }
+    // Manual accounts must be able to send (FR-18): require their SMTP host.
+    let smtp_host = smtp_host.filter(|h| !h.trim().is_empty());
+    if preset.id == "generic" && smtp_host.is_none() {
+        return Err("manual accounts need the SMTP server host".into());
+    }
 
     let account_id = {
         let st = lock_store(&state)?;
@@ -651,6 +1092,8 @@ pub async fn add_account(
                 credential_ref: "",
                 imap_host: imap_host.as_deref().filter(|h| !h.trim().is_empty()),
                 imap_port,
+                smtp_host: smtp_host.as_deref(),
+                smtp_port,
             },
         )
         .map_err(|e| e.to_string())?;
@@ -703,6 +1146,539 @@ pub async fn sync_now(state: State<'_, AppState>) -> CmdResult<()> {
     Ok(())
 }
 
+// ------------------------------------------------------------------ drafts
+
+/// Creates or autosaves a draft (FR-17). `draft_id` present → update (only
+/// `draft`-status rows are editable); absent → create.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn save_draft(
+    state: State<'_, AppState>,
+    account_id: i64,
+    to: Vec<dao::Addr>,
+    cc: Vec<dao::Addr>,
+    subject: String,
+    body_text: String,
+    in_reply_to: Option<String>,
+    thread_id: Option<i64>,
+    draft_id: Option<i64>,
+) -> CmdResult<i64> {
+    let st = lock_store(&state)?;
+    match draft_id {
+        Some(id) => {
+            dao::update_draft(st.conn(), id, &to, &cc, &subject, &body_text)
+                .map_err(|e| e.to_string())?;
+            Ok(id)
+        }
+        None => dao::add_draft(
+            st.conn(),
+            &dao::NewDraft {
+                account_id,
+                thread_id,
+                to: &to,
+                cc: &cc,
+                subject: &subject,
+                body_text: &body_text,
+                in_reply_to: in_reply_to.as_deref(),
+            },
+        )
+        .map_err(|e| e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn list_drafts(
+    state: State<'_, AppState>,
+    only_pending: Option<bool>,
+) -> CmdResult<Vec<dao::DraftRow>> {
+    let st = lock_store(&state)?;
+    dao::list_drafts(st.conn(), only_pending.unwrap_or(false)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_draft(state: State<'_, AppState>, draft_id: i64) -> CmdResult<()> {
+    let st = lock_store(&state)?;
+    dao::delete_draft(st.conn(), draft_id).map_err(|e| e.to_string())
+}
+
+/// Queues a draft for sending (FR-18). The driver performs SMTP + Sent
+/// APPEND; the reply reports the outcome, and a failure keeps the row in the
+/// outbox with its reason.
+#[tauri::command]
+pub async fn send_draft(state: State<'_, AppState>, draft_id: i64) -> CmdResult<()> {
+    {
+        let st = lock_store(&state)?;
+        dao::set_draft_status(st.conn(), draft_id, "queued", None).map_err(|e| e.to_string())?;
+    }
+    let (tx, rx) = mpsc::channel();
+    state.inner().send(DriverMsg::SendDraft {
+        draft_id,
+        reply: tx,
+    });
+    tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(std::time::Duration::from_secs(120))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// Opens the OS mail composer for a mailto: unsubscribe fallback (FR-14).
+/// Only the mailto scheme is accepted.
+#[tauri::command]
+pub async fn open_mailto(app: AppHandle, mailto: String) -> CmdResult<()> {
+    if !mailto.to_lowercase().starts_with("mailto:") {
+        return Err("only mailto: links are accepted".into());
+    }
+    crate::platform::shell::open_url(&app, &mailto).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------- settings
+
+/// The whole settings surface for the UI (Phase 5): every key the app owns.
+#[tauri::command]
+pub async fn get_settings(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
+    let st = lock_store(&state)?;
+    let mut out = serde_json::Map::new();
+    for key in SETTINGS_KEYS {
+        if let Some(v) = dao::get_setting(st.conn(), key).ok().flatten() {
+            out.insert((*key).to_string(), v);
+        }
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
+#[tauri::command]
+pub async fn set_setting(
+    state: State<'_, AppState>,
+    key: String,
+    value: serde_json::Value,
+) -> CmdResult<()> {
+    if !SETTINGS_KEYS.contains(&key.as_str()) {
+        return Err(format!("unknown setting {key}"));
+    }
+    set_setting_value(&state, &key, &value)
+}
+
+/// Keys the UI may write (allowlist: no secrets ever live in `settings`).
+const SETTINGS_KEYS: [&str; 14] = [
+    "ai.enabled",
+    "ai.tier_override",
+    "ai.engine",
+    "ai.byo_model",
+    "ai.model_override",
+    "mcp.allow_send",
+    "mcp.rate_limit_per_hour",
+    "search.also_server",
+    "followup.days",
+    "updates.check_enabled",
+    "privacy.blocklist_updates",
+    "onboarding.completed",
+    "appearance.keymap",
+    "panel.hotkey",
+];
+
+// ----------------------------------------------------------------------- AI
+
+/// Streaming events for AI tasks (FR-21/22: incremental output).
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "type")]
+pub enum AiEvent {
+    Delta { text: String },
+    Notice { text: String },
+    Done,
+}
+
+/// Settings snapshot for AI commands.
+struct AiSettings {
+    enabled: bool,
+    engine: crate::ai::EngineKind,
+    model: Option<String>,
+    tier_override: Option<String>,
+}
+
+fn ai_settings_of(state: &State<'_, AppState>) -> AiSettings {
+    AiSettings {
+        enabled: get_setting_value(state, "ai.enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        engine: get_setting_value(state, "ai.engine")
+            .and_then(|v| v.as_str().and_then(crate::ai::EngineKind::parse))
+            .unwrap_or(crate::ai::EngineKind::Local),
+        model: get_setting_value(state, "ai.byo_model").and_then(|v| v.as_str().map(String::from)),
+        tier_override: get_setting_value(state, "ai.tier_override")
+            .and_then(|v| v.as_str().map(String::from)),
+    }
+}
+
+/// AI status for Settings + onboarding (FR-20/23/25 surface).
+#[tauri::command]
+pub async fn ai_status(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
+    let s = ai_settings_of(&state);
+    let mut ai = state.inner().ai.lock().map_err(|_| "ai poisoned")?;
+    let tier = ai.effective_tier(s.tier_override.as_deref());
+    let hw = crate::ai::models::detect();
+    let key_set = |kind| {
+        crate::platform::providers::get_account_secret(crate::ai::byo_key_target(kind)).is_ok()
+    };
+    let byo_configured = serde_json::json!({
+        "openai": key_set(crate::ai::EngineKind::OpenAi),
+        "anthropic": key_set(crate::ai::EngineKind::Anthropic),
+        "xai": key_set(crate::ai::EngineKind::Xai),
+    });
+    Ok(serde_json::json!({
+        "enabled": s.enabled,
+        "engine": s.engine.as_str(),
+        "tier": tier.as_str(),
+        "tier_reason": format!(
+            "{} GB RAM, {} cores → {} tier",
+            hw.total_ram_gb, hw.logical_cores, tier.as_str()
+        ),
+        "tier_is_override": s.tier_override.is_some(),
+        "model_downloaded": ai.model_downloaded(tier),
+        "sidecar_running": ai
+            .sidecar
+            .as_mut()
+            .map(|s| s.is_alive())
+            .unwrap_or(false),
+        "byo_configured": byo_configured,
+        "model_disk_bytes": crate::ai::manager::disk_usage(&ai.model_dir),
+    }))
+}
+
+/// Master switch (FR-25): off kills every model process immediately.
+#[tauri::command]
+pub async fn ai_set_enabled(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    set_setting_value(&state, "ai.enabled", &serde_json::json!(enabled))?;
+    if !enabled {
+        let mut ai = state.inner().ai.lock().map_err(|_| "ai poisoned")?;
+        ai.shutdown();
+    }
+    Ok(())
+}
+
+/// Deletes the tier's model file, reclaiming disk (FR-20 AC).
+#[tauri::command]
+pub async fn ai_delete_model(state: State<'_, AppState>) -> CmdResult<()> {
+    let s = ai_settings_of(&state);
+    let mut ai = state.inner().ai.lock().map_err(|_| "ai poisoned")?;
+    ai.shutdown();
+    let tier = ai.effective_tier(s.tier_override.as_deref());
+    crate::ai::manager::delete(&ai.model_dir, crate::ai::models::write_model_for(tier))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Model download with progress events (FR-20 AC: resumable, verified).
+#[tauri::command]
+pub async fn ai_download_model(
+    state: State<'_, AppState>,
+    on_event: tauri::ipc::Channel<AiEvent>,
+) -> CmdResult<()> {
+    let s = ai_settings_of(&state);
+    let ai = Arc::clone(state.inner().ai_ref());
+    let channel = on_event.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let ai = ai.lock().map_err(|_| "ai poisoned")?;
+        let tier = ai.effective_tier(s.tier_override.as_deref());
+        let pin = crate::ai::models::write_model_for(tier);
+        crate::ai::manager::download(&ai.model_dir, pin, &mut |received, total| {
+            let _ = channel.send(AiEvent::Notice {
+                text: format!("{} / {} bytes", received, total),
+            });
+        })
+        .map_err(|e| e.to_string())?;
+        let _ = on_event.send(AiEvent::Done);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(())
+}
+
+/// Stores (or clears) a BYO API key in Credential Manager (FR-24).
+#[tauri::command]
+pub async fn ai_set_key(
+    _state: State<'_, AppState>,
+    kind: String,
+    key: Option<String>,
+) -> CmdResult<()> {
+    let engine = crate::ai::EngineKind::parse(&kind)
+        .filter(|k| *k != crate::ai::EngineKind::Local)
+        .ok_or("unknown engine kind")?;
+    let target = crate::ai::byo_key_target(engine);
+    match key {
+        Some(k) if !k.trim().is_empty() => {
+            crate::platform::providers::set_account_secret(target, k.trim())
+        }
+        _ => crate::platform::providers::delete_account_secret(target),
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// Builds the plain-text transcript for a thread (summarize + draft input).
+fn thread_transcript(store: &Store, thrid: &str) -> Result<String, String> {
+    let messages = queries::thread_messages(store.conn(), thrid).map_err(|e| e.to_string())?;
+    let mut out = String::new();
+    for m in messages {
+        let body = queries::message_body(store.conn(), m.id)
+            .ok()
+            .flatten()
+            .map(|b| b.text.or(b.html).unwrap_or_default())
+            .unwrap_or_default();
+        let from = m
+            .from
+            .first()
+            .map(|a| a.email.as_str())
+            .unwrap_or("unknown");
+        out.push_str(&format!("From {from}:\n{body}\n\n"));
+    }
+    Ok(out)
+}
+
+/// Runs the streaming task with the FR-24 fallback chain: chosen engine →
+/// local model with a visible notice. Never silently switches to cloud.
+fn run_ai_task(
+    ai: &Arc<Mutex<crate::ai::AiState>>,
+    settings: &AiSettings,
+    passes: &[Vec<crate::ai::Msg>],
+    reduce: bool,
+    on_event: &tauri::ipc::Channel<AiEvent>,
+) -> Result<String, String> {
+    if !settings.enabled {
+        return Err("AI is disabled".into());
+    }
+
+    fn run_passes(
+        engine: &dyn crate::ai::ChatEngine,
+        passes: &[Vec<crate::ai::Msg>],
+        reduce: bool,
+        on_event: &tauri::ipc::Channel<AiEvent>,
+    ) -> Result<String, String> {
+        let mut parts = Vec::new();
+        for pass in passes {
+            parts.push(
+                engine
+                    .stream_chat(pass, &mut |d| {
+                        let _ = on_event.send(AiEvent::Delta {
+                            text: d.to_string(),
+                        });
+                    })
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        if reduce && parts.len() > 1 {
+            // Map-reduce (spec §6.4): part summaries combine into the final
+            // summary, which streams its own deltas.
+            engine
+                .stream_chat(
+                    &crate::ai::prompts::summarize_reduce_messages(&parts),
+                    &mut |d| {
+                        let _ = on_event.send(AiEvent::Delta {
+                            text: d.to_string(),
+                        });
+                    },
+                )
+                .map_err(|e| e.to_string())
+        } else {
+            Ok(parts.join("\n\n"))
+        }
+    }
+
+    // Resolve the engine under the AI lock, then stream without it.
+    let local_engine = |ai: &Mutex<crate::ai::AiState>| -> Result<
+        (Box<dyn crate::ai::ChatEngine>, String),
+        String,
+    > {
+        let mut ai = ai.lock().map_err(|_| "ai poisoned")?;
+        let tier = ai.effective_tier(settings.tier_override.as_deref());
+        let engine = ai.local_engine(tier).map_err(|e| e.to_string())?;
+        Ok((Box::new(engine), tier.as_str().to_string()))
+    };
+
+    match settings.engine {
+        crate::ai::EngineKind::Local => {
+            let (engine, _tier) = local_engine(ai)?;
+            run_passes(engine.as_ref(), passes, reduce, on_event)
+        }
+        byo_kind => {
+            let key =
+                crate::platform::providers::get_account_secret(crate::ai::byo_key_target(byo_kind))
+                    .map_err(|_| {
+                        format!(
+                            "no {} API key configured (Settings → AI)",
+                            byo_kind.as_str()
+                        )
+                    })?;
+            let model = settings
+                .model
+                .clone()
+                .unwrap_or_else(|| byo_kind.default_model().to_string());
+            let engine: Box<dyn crate::ai::ChatEngine> = match byo_kind {
+                crate::ai::EngineKind::Anthropic => {
+                    Box::new(crate::ai::chat::Anthropic::new(&key, &model))
+                }
+                crate::ai::EngineKind::OpenAi => {
+                    Box::new(crate::ai::chat::OpenAiCompat::openai(&key, &model))
+                }
+                crate::ai::EngineKind::Xai => {
+                    Box::new(crate::ai::chat::OpenAiCompat::xai(&key, &model))
+                }
+                crate::ai::EngineKind::Local => unreachable!("matched above"),
+            };
+            match run_passes(engine.as_ref(), passes, reduce, on_event) {
+                Ok(text) => Ok(text),
+                Err(byo_err) => {
+                    // FR-24: fall back to the local model with a visible notice.
+                    let (local, _tier) = local_engine(ai).map_err(|local_err| {
+                        format!("{byo_err}; local fallback unavailable: {local_err}")
+                    })?;
+                    let _ = on_event.send(AiEvent::Notice {
+                        text: format!(
+                            "{} API unreachable — used the local model instead",
+                            byo_kind.as_str()
+                        ),
+                    });
+                    run_passes(local.as_ref(), passes, reduce, on_event)
+                }
+            }
+        }
+    }
+}
+
+/// Summarizes a thread on-device (FR-21): streams incrementally, works
+/// offline, respects the context budget (chunked map-reduce).
+#[tauri::command]
+pub async fn ai_summarize(
+    state: State<'_, AppState>,
+    thread_id: String,
+    on_event: tauri::ipc::Channel<AiEvent>,
+) -> CmdResult<()> {
+    let (transcript, settings) = {
+        let st = lock_store(&state)?;
+        let transcript = thread_transcript(&st, &thread_id)?;
+        (transcript, ai_settings_of(&state))
+    };
+    let ai = Arc::clone(state.inner().ai_ref());
+    let passes = crate::ai::prompts::summarize_messages(&transcript);
+    tauri::async_runtime::spawn_blocking(move || {
+        run_ai_task(&ai, &settings, &passes, true, &on_event)?;
+        let _ = on_event.send(AiEvent::Done);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(())
+}
+
+/// Drafts a reply from thread context + instruction (FR-22): streams into
+/// the composer as editable text; nothing is ever sent automatically.
+#[tauri::command]
+pub async fn ai_draft_reply(
+    state: State<'_, AppState>,
+    thread_id: String,
+    instruction: String,
+    on_event: tauri::ipc::Channel<AiEvent>,
+) -> CmdResult<()> {
+    let (transcript, account_email, settings) = {
+        let st = lock_store(&state)?;
+        let transcript = thread_transcript(&st, &thread_id)?;
+        let account_email = queries::thread_messages(st.conn(), &thread_id)
+            .ok()
+            .and_then(|m| m.first().map(|m| m.account_id))
+            .and_then(|id| {
+                st.conn()
+                    .query_row("SELECT email FROM accounts WHERE id = ?1", [id], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .ok()
+            })
+            .unwrap_or_default();
+        (transcript, account_email, ai_settings_of(&state))
+    };
+    let ai = Arc::clone(state.inner().ai_ref());
+    let msgs = crate::ai::prompts::draft_messages(&transcript, &instruction, &account_email);
+    tauri::async_runtime::spawn_blocking(move || {
+        run_ai_task(&ai, &settings, &[msgs], false, &on_event)?;
+        let _ = on_event.send(AiEvent::Done);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(())
+}
+
+// --------------------------------------------------------------------- MCP
+
+/// One-click registration into an MCP client's config (FR-26): .bak backup,
+/// unknown keys preserved. The client needs a restart to pick it up.
+#[tauri::command]
+pub async fn mcp_register(state: State<'_, AppState>, client: String) -> CmdResult<String> {
+    let client = crate::mcp::register::Client::parse(&client)
+        .ok_or_else(|| format!("unknown client {client}"))?;
+    let exe = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .to_string();
+    let path = crate::mcp::register::register(client, &exe)?;
+    let st = lock_store(&state)?;
+    dao::audit(
+        st.conn(),
+        "user",
+        "mcp_register",
+        serde_json::json!({ "client": client.label(), "path": path }),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// One audit trail row: (id, at, actor, action, detail json).
+pub type AuditTailRow = (i64, i64, String, String, String);
+
+/// Audit tail for Settings → MCP (FR-27 AC).
+#[tauri::command]
+pub async fn mcp_audit_tail(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> CmdResult<Vec<AuditTailRow>> {
+    let st = lock_store(&state)?;
+    dao::audit_tail(st.conn(), limit.unwrap_or(100)).map_err(|e| e.to_string())
+}
+
+// -------------------------------------------------------------- diagnostics
+
+/// Session host list (FR-32 evidence): every remote host this process
+/// contacted, in-process only (D-015: never leaves the machine).
+#[tauri::command]
+pub async fn diagnostics_hosts(state: State<'_, AppState>) -> CmdResult<Vec<String>> {
+    let _ = state;
+    Ok(crate::platform::netlog::hosts())
+}
+
+/// Storage usage (Phase-5 diagnostics): DB + models, in bytes.
+#[derive(serde::Serialize)]
+pub struct StorageUsage {
+    pub db_bytes: u64,
+    pub models_bytes: u64,
+}
+
+#[tauri::command]
+pub async fn storage_usage(state: State<'_, AppState>) -> CmdResult<StorageUsage> {
+    let dir = state.inner().data_dir.clone();
+    let db = std::fs::metadata(dir.join("profile").join(crate::store::DB_FILE))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let models = {
+        let ai = state.inner().ai.lock().map_err(|_| "ai poisoned")?;
+        crate::ai::manager::disk_usage(&ai.model_dir)
+    };
+    Ok(StorageUsage {
+        db_bytes: db,
+        models_bytes: models,
+    })
+}
+
 /// Esc handler in the panel webview (FR-28).
 #[tauri::command]
 pub async fn hide_panel(app: AppHandle) -> CmdResult<()> {
@@ -735,6 +1711,8 @@ pub fn seed_demo(store: &Store) -> i64 {
             credential_ref: "cracktivity.e2e.seed",
             imap_host: None,
             imap_port: None,
+            smtp_host: None,
+            smtp_port: None,
         },
     )
     .unwrap();
@@ -1000,7 +1978,11 @@ mod tests {
 
         let rendered = crate::render::render_document(&html);
         assert!(!rendered.html.contains("script"));
-        assert!(!rendered.html.contains("tracker.example"));
+        assert!(
+            !rendered.html.contains(" src="),
+            "no live remote src: {}",
+            rendered.html
+        );
         assert!(rendered.html.contains("Q3"));
         assert_eq!(rendered.blocked_images, 1);
     }

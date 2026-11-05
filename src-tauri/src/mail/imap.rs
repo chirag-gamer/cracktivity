@@ -33,8 +33,8 @@ use url::Url;
 
 use super::headers::parse_header_block;
 use super::transport::{
-    BodyData, FetchedMeta, FolderInfo, IdleEvent, MailTransport, SelectData, SpecialRole,
-    TransportError, TransportResult, UidRange,
+    BodyData, FetchedMeta, FolderInfo, IdleEvent, MailTransport, SearchField, SelectData,
+    SpecialRole, TransportError, TransportResult, UidRange,
 };
 
 /// Authentication for [`ImapTransport::connect`]. Secrets are carried as
@@ -412,6 +412,26 @@ impl MailTransport for ImapTransport {
             .append(mailbox_owned(mailbox)?, message, opts)?
             .1
             .map_or(0, |(_, uid)| uid))
+    }
+
+    fn uid_search(&mut self, field: SearchField, needle: &str) -> TransportResult<Vec<u32>> {
+        let astring = AString::try_from(needle.to_string())
+            .map_err(|e| TransportError::Protocol(format!("bad search needle {needle:?}: {e}")))?;
+        let key = match field {
+            SearchField::Subject => SearchKey::Subject(astring),
+            SearchField::From => SearchKey::From(astring),
+            SearchField::To => SearchKey::To(astring),
+            SearchField::Text => SearchKey::Text(astring),
+        };
+        Ok(self
+            .client
+            .search(
+                Vec1::try_from(vec![key]).expect("one search key is never empty"),
+                ImapMessageSearchOptions { uid: true },
+            )?
+            .into_iter()
+            .map(|uid| uid.get())
+            .collect())
     }
 }
 

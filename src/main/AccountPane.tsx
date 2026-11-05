@@ -58,6 +58,33 @@ export function AccountPane({ accounts, statuses, scope, onScope }: AccountPaneP
           </button>
         );
       })}
+
+      <div className="nav-tools">
+        <button
+          className={`nav-item${scope.kind === "followups" ? " active" : ""}`}
+          onClick={() => onScope({ kind: "followups" })}
+          data-testid="nav-followups"
+        >
+          <span className="nav-dot" />
+          <span className="nav-label">{S.followups}</span>
+        </button>
+        <button
+          className={`nav-item${scope.kind === "cleanup" ? " active" : ""}`}
+          onClick={() => onScope({ kind: "cleanup" })}
+          data-testid="nav-cleanup"
+        >
+          <span className="nav-dot" />
+          <span className="nav-label">{S.cleanup}</span>
+        </button>
+        <button
+          className={`nav-item${scope.kind === "settings" ? " active" : ""}`}
+          onClick={() => onScope({ kind: "settings" })}
+          data-testid="nav-settings"
+        >
+          <span className="nav-dot" />
+          <span className="nav-label">{S.settings}</span>
+        </button>
+      </div>
     </nav>
   );
 }
