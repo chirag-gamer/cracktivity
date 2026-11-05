@@ -195,8 +195,10 @@ pub fn open_url(_app: &AppHandle, _url: &str) -> Result<(), String> {
 pub const DEFAULT_HOTKEY: &str = "ctrl+shift+space";
 
 /// Validates a global-hotkey spec (FR-28 configurability). Requires a
-/// non-modifier key plus Ctrl/Alt/Win — bare Shift+Space is rejected because
-/// it toggles full-width input on East-Asian IMEs (D-045).
+/// non-modifier key plus Ctrl/Alt/Super(⌘/Win) — bare Shift+Space is
+/// rejected because it toggles full-width input on East-Asian IMEs (D-045).
+/// Base-modifier set follows the pinned global-hotkey 0.8.0 parser
+/// (ctrl/alt/shift/super/cmd — no `win`/`meta` tokens; D-046).
 pub fn validate_hotkey(spec: &str) -> Result<(), String> {
     let parts: Vec<&str> = spec
         .split('+')
@@ -214,15 +216,21 @@ pub fn validate_hotkey(spec: &str) -> Result<(), String> {
     if ["ctrl", "alt", "shift", "meta", "super", "cmd", "win"].contains(&key.as_str()) {
         return Err("hotkey must end in a non-modifier key".into());
     }
-    let has_base = mods.iter().any(|m| {
-        matches!(
-            m.to_lowercase().as_str(),
-            "ctrl" | "alt" | "meta" | "super" | "win" | "cmd"
-        )
-    });
+    // Every modifier must be a token the pinned global-hotkey parser knows
+    // (0.8.0: ctrl, alt/option, shift, super/cmd — no win/meta, D-046).
+    for m in mods {
+        if !["ctrl", "alt", "shift", "super", "cmd"].contains(&m.to_lowercase().as_str()) {
+            return Err(format!(
+                "unknown modifier {m:?} — use ctrl, alt, shift, super or cmd"
+            ));
+        }
+    }
+    let has_base = mods
+        .iter()
+        .any(|m| matches!(m.to_lowercase().as_str(), "ctrl" | "alt" | "super" | "cmd"));
     if !has_base {
         return Err(
-            "hotkey must include Ctrl, Alt or the Windows key — Shift+Space alone conflicts with East-Asian IMEs (full-width toggle)".into(),
+            "hotkey must include Ctrl, Alt or Super/Command — Shift+Space alone conflicts with East-Asian IMEs (full-width toggle)".into(),
         );
     }
     Ok(())
@@ -316,28 +324,39 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::Shortcut;
+
     use super::validate_hotkey;
 
-    /// FR-28: the shipped default is valid.
+    /// Every accepted combo must survive BOTH validate_hotkey AND the pinned
+    /// global-hotkey parser — validation alone was a lying test (D-046).
     #[test]
-    fn default_hotkey_is_valid() {
-        validate_hotkey(super::DEFAULT_HOTKEY).expect("default parses");
-    }
-
-    /// D-045: Shift+Space alone is rejected (East-Asian IME full-width
-    /// toggle); Ctrl/Alt/Win-based combos are accepted.
-    #[test]
-    fn bare_shift_space_is_rejected() {
-        assert!(validate_hotkey("shift+space").is_err());
-        assert!(validate_hotkey("Shift + Space").is_err());
+    fn accepted_hotkeys_parse_through_the_real_parser() {
         for ok in [
+            super::DEFAULT_HOTKEY,
             "ctrl+shift+space",
             "alt+f9",
             "ctrl+alt+m",
-            "win+shift+j",
-            "meta+ctrl+k",
+            "super+shift+j",
+            "cmd+ctrl+k",
         ] {
             validate_hotkey(ok).unwrap_or_else(|e| panic!("{ok} rejected: {e}"));
+            Shortcut::from_str(ok).unwrap_or_else(|e| {
+                panic!("{ok} passes validation but the parser rejects it: {e}")
+            });
+        }
+    }
+
+    /// FR-28/D-045: Shift+Space alone is rejected (East-Asian IME
+    /// full-width toggle). D-046: `win`/`meta` are not parser tokens in the
+    /// pinned global-hotkey 0.8.0 and are rejected up front.
+    #[test]
+    fn bare_shift_space_and_unknown_mods_are_rejected() {
+        assert!(validate_hotkey("shift+space").is_err());
+        assert!(validate_hotkey("Shift + Space").is_err());
+        for bad in ["win+shift+j", "meta+ctrl+k"] {
+            assert!(validate_hotkey(bad).is_err(), "{bad} must be rejected");
         }
     }
 
@@ -346,7 +365,7 @@ mod tests {
         assert!(validate_hotkey("space").is_err(), "no modifier");
         assert!(validate_hotkey("ctrl").is_err(), "no key");
         assert!(
-            validate_hotkey("ctrl+shift+alt+meta+space").is_err(),
+            validate_hotkey("ctrl+shift+alt+super+space").is_err(),
             "too many"
         );
         assert!(validate_hotkey("ctrl+shift").is_err(), "modifier-only");

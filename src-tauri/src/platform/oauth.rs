@@ -54,8 +54,9 @@ pub const OUTLOOK_CLIENT_ID: &str = "";
 pub const SCOPES: &str =
     "offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send";
 
-const AUTHORIZE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
-const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+pub(crate) const AUTHORIZE_URL: &str =
+    "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
+pub(crate) const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 
 #[derive(Debug)]
 pub struct OAuthTokens {

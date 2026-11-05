@@ -6,6 +6,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { SettingsView } from "../main/SettingsView";
 import { ThemeProvider } from "../shared/theme";
 import { S } from "../shared/strings";
+import { onKeymapChange } from "../main/keymap";
 
 afterEach(() => {
   clearMocks();
@@ -66,22 +67,33 @@ describe("SettingsView appearance (FR-29/FR-30 AC)", () => {
   });
 
   it("changing the theme writes appearance.theme to the DB and localStorage", async () => {
-    setup({});
+    const calls = setup({});
     const { getByTestId } = renderSettings();
     fireEvent.change(getByTestId("theme-choice"), { target: { value: "dark" } });
     await waitFor(() =>
       expect(localStorage.getItem("cracktivity.theme")).toBe("dark"),
     );
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    // The DB write goes through set_setting (asserted via mockIPC capture).
+    await waitFor(() =>
+      expect(calls.some(([cmd]) => cmd === "set_setting")).toBe(true),
+    );
+    const db = calls.find(([cmd]) => cmd === "set_setting");
+    expect(db?.[1]).toMatchObject({ key: "appearance.theme", value: "dark" });
   });
 
-  it("changing the keymap persists the scheme (FR-30 AC)", async () => {
-    setup({});
+  it("changing the keymap persists the scheme and notifies listeners (FR-30 AC/D-046)", async () => {
+    const calls = setup({});
+    const seen: string[] = [];
+    const off = onKeymapChange((s) => seen.push(s));
     const { getByTestId } = renderSettings();
     fireEvent.change(getByTestId("keymap-choice"), { target: { value: "gmail" } });
     await waitFor(() =>
       expect(localStorage.getItem("cracktivity.keymap")).toBe("gmail"),
+    );
+    expect(seen).toEqual(["gmail"]);
+    off();
+    await waitFor(() =>
+      expect(calls.some(([cmd]) => cmd === "set_setting")).toBe(true),
     );
   });
 });

@@ -68,8 +68,24 @@ export function readKeymapScheme(): KeymapScheme {
   return isKeymapScheme(v) ? v : "cracktivity";
 }
 
+// In-window pub-sub (D-046): changing the scheme in Settings must take
+// effect immediately in the running window (FR-30 AC), not after a restart.
+// Cross-window propagation stays on the DB-adoption path (D-039).
+type SchemeListener = (s: KeymapScheme) => void;
+const listeners = new Set<SchemeListener>();
+
+export function onKeymapChange(listener: SchemeListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function notify(scheme: KeymapScheme): void {
+  listeners.forEach((l) => l(scheme));
+}
+
 export function writeKeymapScheme(scheme: KeymapScheme): void {
   writePref(KEYMAP_DB_KEY, KEYMAP_LOCAL_KEY, scheme);
+  notify(scheme);
 }
 
 /** Adopts the canonical DB scheme (converges panel and main windows). */

@@ -47,18 +47,26 @@ function useSystemMode(): ThemeMode {
     const apply = () => setSystemDark(mq.matches);
     apply();
     mq.addEventListener("change", apply);
+    // The Tauri subscription is async; a `disposed` flag keeps a late
+    // resolution from leaking the listener (same pattern as PanelApp).
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) =>
         getCurrentWindow()
           .onThemeChanged(apply)
           .then((off) => {
-            unlisten = off;
+            if (disposed) {
+              void Promise.resolve(off()).catch(() => {});
+            } else {
+              unlisten = off;
+            }
           })
           .catch(() => {}),
       )
       .catch(() => {});
     return () => {
+      disposed = true;
       mq.removeEventListener("change", apply);
       unlisten?.();
     };

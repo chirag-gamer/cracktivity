@@ -97,17 +97,42 @@ mod tests {
     /// app's own code paths can reach — OAuth endpoints, the pinned model
     /// download host, the BYO AI engines, loopback, and every provider
     /// preset's IMAP/SMTP servers. User-content and user-configured hosts
-    /// are excluded by design (D-044).
+    /// are excluded by design (D-044). `expected` is derived from the
+    /// runtime sources themselves (parsed endpoint URLs + the provider
+    /// presets), NOT from the inventory — so equality holds in both
+    /// directions (D-046 corrected the one-sided version).
     #[test]
     fn static_inventory_covers_all_runtime_egress() {
-        let mut expected: BTreeSet<String> = STATIC_EGRESS_HOSTS
-            .iter()
-            .map(|h| h.to_lowercase())
-            .collect();
+        use crate::platform::providers::ALL;
+        use url::Url;
+
+        fn host_of(url: &str) -> Option<String> {
+            Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+        }
+
+        // Runtime-derived egress sources (each also pinned by its module test).
+        let mut expected: BTreeSet<String> = [
+            // OAuth endpoints (oauth.rs consts).
+            host_of(crate::platform::oauth::AUTHORIZE_URL),
+            host_of(crate::platform::oauth::TOKEN_URL),
+            // Pinned model download host (models.rs).
+            host_of(&crate::ai::models::MODELS[0].download_url()),
+            // BYO engine endpoints (chat.rs).
+            host_of(&crate::ai::chat::OpenAiCompat::openai("k", "m").base_url),
+            host_of(&crate::ai::chat::OpenAiCompat::xai("k", "m").base_url),
+            host_of(crate::ai::chat::ANTHROPIC_URL),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        // llama-server + loopback image proxy.
+        expected.insert(HOST_LOOPBACK.to_lowercase());
 
         // Provider presets: every IMAP/SMTP host must be in the inventory.
         // GENERIC is skipped — its hosts are user-supplied at add time.
-        for p in crate::platform::providers::ALL.iter() {
+        for p in ALL.iter() {
             if p.imap_host.is_empty() {
                 continue;
             }
@@ -130,5 +155,6 @@ mod tests {
             extra.is_empty(),
             "inventory lists hosts no code path contacts: {extra:?}"
         );
+        assert_eq!(inventory, expected, "audit must be exact set equality");
     }
 }

@@ -141,7 +141,7 @@ export const S = {
   hotkeyDefault: "Ctrl+Shift+Space",
   hotkeySaved: "Hotkey updated",
   hotkeyImeNote:
-    "Must include Ctrl, Alt or the Windows key. Shift+Space alone is not allowed — it toggles full-width input on East-Asian IMEs.",
+    "Must include Ctrl, Alt or Super/Command. Shift+Space alone is not allowed — it toggles full-width input on East-Asian IMEs.",
   logsTitle: "Session log",
   logsEmpty: "No events logged this session",
   clearLogs: "Clear log",
@@ -149,6 +149,7 @@ export const S = {
   pruneCache: "Prune partial downloads",
   prunedBytes: (n: number) => `Freed ${Math.round(n / 1e6)} MB`,
   pruneNothing: "Nothing to prune",
+  pruneFailed: "Prune failed",
   onboardingAiTitle: "On-device AI",
   onboardingAiBody: S_aiBody(),
   onboardingAccept: "Enable (recommended)",

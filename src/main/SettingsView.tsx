@@ -33,7 +33,7 @@ export function SettingsView() {
   const [storage, setStorage] = useState<{ db_bytes: number; models_bytes: number } | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [logsCleared, setLogsCleared] = useState(false);
-  const [pruned, setPruned] = useState<number | null>(null);
+  const [pruneNote, setPruneNote] = useState<string | null>(null);
   const [hotkey, setHotkey] = useState("");
   const [hotkeyNote, setHotkeyNote] = useState<string | null>(null);
   const [keymap, setKeymap] = useState<KeymapScheme>(() => readKeymapScheme());
@@ -80,7 +80,14 @@ export function SettingsView() {
     setHotkeyNote(null);
     ipc
       .setPanelHotkey(hotkey)
-      .then(() => setHotkeyNote(S.hotkeySaved))
+      .then(() => {
+        setHotkeyNote(S.hotkeySaved);
+        // Keep the placeholder in lockstep with what Rust persisted (the
+        // empty input resets to the default, D-045).
+        const saved = hotkey.trim() || "ctrl+shift+space";
+        setSettings((s) => ({ ...s, "panel.hotkey": saved }));
+        setHotkey("");
+      })
       .catch((e) => setHotkeyNote(String(e)));
   };
 
@@ -337,14 +344,14 @@ export function SettingsView() {
             onClick={() =>
               ipc
                 .pruneCache()
-                .then((n) => setPruned(n))
-                .catch(() => setPruned(-1))
+                .then((n) => setPruneNote(n > 0 ? S.prunedBytes(n) : S.pruneNothing))
+                .catch(() => setPruneNote(S.pruneFailed))
             }
           >
             {S.pruneCache}
           </button>
-          {pruned !== null && pruned > 0 && (
-            <Text size={200} data-testid="prune-result">{S.prunedBytes(pruned)}</Text>
+          {pruneNote && (
+            <Text size={200} data-testid="prune-result">{pruneNote}</Text>
           )}
         </div>
         <h4>{S.logsTitle}</h4>

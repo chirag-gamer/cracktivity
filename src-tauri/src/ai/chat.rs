@@ -16,7 +16,7 @@ fn log_host(base_or_url: &str) {
 
 /// Anthropic native endpoint (V-5.2 audit pin: host is in the netlog
 /// inventory; the test asserts it).
-const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+pub(crate) const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 
 #[derive(Debug, Clone)]
 pub struct Msg {

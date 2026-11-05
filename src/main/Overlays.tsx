@@ -10,7 +10,7 @@ import {
   Input,
 } from "@fluentui/react-components";
 import { S } from "../shared/strings";
-import { shortcutRows, type KeymapScheme } from "./keymap";
+import { KEYMAP_SCHEMES, shortcutRows, type KeymapScheme } from "./keymap";
 
 export function ShortcutsOverlay({
   open,
@@ -28,11 +28,16 @@ export function ShortcutsOverlay({
     ["Esc", S.shortcutEsc],
     ["?", S.shortcutSelf],
   ];
+  // FR-30 AC: the cheat sheet carries the active keymap label.
+  const schemeLabel =
+    KEYMAP_SCHEMES.find((k) => k.id === scheme)?.label ?? scheme;
   return (
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface>
         <DialogBody>
-          <DialogTitle>{S.shortcutsTitle}</DialogTitle>
+          <DialogTitle>
+            {S.shortcutsTitle} — {schemeLabel}
+          </DialogTitle>
           <DialogContent>
             <table className="shortcut-table" data-testid="shortcuts-overlay">
               <tbody>

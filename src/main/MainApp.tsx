@@ -20,7 +20,12 @@ import { CleanupView } from "./CleanupView";
 import { SettingsView } from "./SettingsView";
 import { Composer, type ComposerTarget } from "./Composer";
 import { OnboardingDialog } from "./Onboarding";
-import { readKeymapScheme, syncKeymapScheme, type KeymapScheme } from "./keymap";
+import {
+  onKeymapChange,
+  readKeymapScheme,
+  syncKeymapScheme,
+  type KeymapScheme,
+} from "./keymap";
 import { S } from "../shared/strings";
 
 export function MainApp() {
@@ -35,9 +40,11 @@ export function MainApp() {
   const [onboarding, setOnboarding] = useState(false);
   const [keymap, setKeymap] = useState<KeymapScheme>(() => readKeymapScheme());
 
-  // Keymap scheme (FR-30 AC): DB row is canonical, mirror seeds first paint.
+  // Keymap scheme (FR-30 AC): DB row is canonical, mirror seeds first paint;
+  // in-window changes from Settings apply immediately (D-046).
   useEffect(() => {
     syncKeymapScheme(setKeymap);
+    return onKeymapChange(setKeymap);
   }, []);
 
   // First-run dialog (FR-20): exactly once, keyed by onboarding.completed.

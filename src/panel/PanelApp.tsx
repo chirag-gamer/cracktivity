@@ -10,7 +10,12 @@ import { S } from "../shared/strings";
 import { relativeTime, senderName } from "../shared/format";
 import type { MessageRow } from "../shared/types";
 import { useKeyboard } from "../main/keyboard";
-import { readKeymapScheme, syncKeymapScheme, type KeymapScheme } from "../main/keymap";
+import {
+  onKeymapChange,
+  readKeymapScheme,
+  syncKeymapScheme,
+  type KeymapScheme,
+} from "../main/keymap";
 
 /** Newest unread messages across all inboxes (the triage queue). */
 async function loadQueue(): Promise<MessageRow[]> {
@@ -37,9 +42,11 @@ export function PanelApp() {
   const queueRef = useRef(queue);
   queueRef.current = queue;
 
-  // The main window syncs the DB scheme into the mirror; adopt it here too.
+  // The main window syncs the DB scheme into the mirror; adopt it here too,
+  // and follow in-window changes from Settings (D-046).
   useEffect(() => {
     syncKeymapScheme(setKeymap);
+    return onKeymapChange(setKeymap);
   }, []);
 
   const refresh = useCallback(() => {
