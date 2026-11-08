@@ -104,7 +104,7 @@ export function MainApp() {
     [currentThreads, mail],
   );
 
-  // Opening a thread marks its unread messages read — keyed on the thread
+  // Opening a thread marks its unread messages read. keyed on the thread
   // identity, so the refresh triggered by 'u' (mark unread) cannot
   // immediately re-mark it read. The latch is set only once the thread's
   // messages have loaded (they arrive after selection), otherwise the
@@ -162,7 +162,7 @@ export function MainApp() {
       },
       toggleUnread: () => {
         // Gmail-style toggle: unread thread → read; read thread → unread.
-        // (markRead(id, read=true) means READ — polarity pinned by test.)
+        // (markRead(id, read=true) means READ. polarity pinned by test.)
         const anyUnread = mail.messages.some((m) => m.unread);
         markThreadRead(anyUnread);
         // Keep the open-thread effect from re-marking on the refresh below.
@@ -287,7 +287,7 @@ export function MainApp() {
         initialBody: "",
       });
       // The instruction steers the AI draft (FR-22); pass it through the
-      // composer's streaming effect via the subject field is wrong — the
+      // composer's streaming effect via the subject field is wrong. the
       // composer streams with its own instruction, so stash it on the DOM
       // node for the composer to read on mount.
       window.setTimeout(() => {
@@ -306,6 +306,7 @@ export function MainApp() {
         statuses={mail.statuses}
         scope={mail.scope}
         onScope={mail.setScope}
+        onCompose={actions.compose}
       />
       <div className="pane-middle">
         {mail.scope.kind !== "settings" && (

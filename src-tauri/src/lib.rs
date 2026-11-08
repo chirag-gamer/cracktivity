@@ -93,6 +93,8 @@ pub fn run() {
                 };
                 let _ = main.set_background_color(Some(theme_bg(mode)));
                 let _ = main.show();
+                let _ = main.unminimize();
+                let _ = main.set_focus();
             }
 
             let handle = app.handle().clone();
@@ -144,6 +146,8 @@ pub fn run() {
             app::ai_download_model,
             app::ai_delete_model,
             app::ai_set_key,
+            app::ai_chatgpt_connect,
+            app::ai_chatgpt_disconnect,
             app::ai_summarize,
             app::ai_draft_reply,
             app::mcp_register,

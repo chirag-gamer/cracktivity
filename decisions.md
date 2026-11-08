@@ -336,3 +336,50 @@ Rules: this file is append-only. Never edit or delete past entries. To change a 
   5. **P3s fixed**: theme provider's async Tauri unsubscription now has a `disposed` guard (StrictMode leak window); the hotkey save updates the local settings mirror so the placeholder isn't stale; the `?` cheat sheet now carries the active keymap label literally (FR-30 AC); the settingsView theme test actually asserts the `set_setting` DB call its title claims.
   6. **P3s noted, not fixed**: e2e Tab-focus assertion is coupled to the adjacency of the two appearance field-rows (acceptable; DOM order is part of the contract there); D-041's NVDA citation (#2330) is a WinAppSDK-hosted fix — conclusion (NVDA works with WebView2 content) confirmed, attribution imprecise; the pre-existing `models/models` double-directory convention in ai/manager is a naming smell deliberately untouched (scope discipline).
 - **Consequences:** All gates re-run green (fmt/clippy, 124+1 cargo tests, eslint/tsc/49 vitest, e2e suite). D-044's "exact set equality" and plan.md's V-5.2 "exactly" wording are now true as written.
+
+
+## D-047 — 2026-11-06 — Bloop.email-inspired UI Redesign: Design Tokens, SVG Iconography, Segmented Controls, and Interactive Polish — accepted
+
+- **Context:** Following user request and `button-ui-redesign-methodology.md` + `design-to-code` skill principles, the UI was audited against `demo.mp4` (the Bloop.email reference cited in PRD §1). The baseline frontend was functionally sound but visually primitive: unstyled buttons, raw borders, lack of typographic hierarchy, missing avatars, text-based navigation links, and absence of consistent icon language.
+- **Decision:**
+  1. **Design Tokens & Theme Architecture:** Defined a comprehensive CSS variable system in `src/global.css` for both dark mode (`--bg-canvas: #0f0f12`, elevated `#202025`, card selected `#242c3d`) and light mode (`--bg-canvas: #f8fafc`, elevated `#ffffff`, card selected `#eff6ff`), adhering to the no-flash `data-theme` pre-paint architecture (D-040).
+  2. **SVG-Only Iconography (Zero Emojis):** Enforced code-native SVG icons from `@fluentui/react-icons` across the entire application (navigation, triage rows, status indicators, actions, tools, and dialogs) replacing all ad-hoc unicode symbols and text placeholders.
+  3. **Sidebar Architecture:** Added a polished header mark with status dot, prominent primary "+ Compose" button with shortcut indicator (`C`), deterministic hue avatar badges for accounts, and categorized "Smart Views" section.
+  4. **Toolbar & Message List:** Replaced raw buttons with a sleek segmented pill control ("Important", "Other", "All"), integrated search bar with `/` keyboard hint badge, sender avatar initials, unread dot indicators, warm amber star toggles (`StarFilled`), tabular relative timestamps, and metadata badge chips.
+  5. **Reader & Thread View:** Added a sticky top action bar with icon controls (Archive, Mark Unread, Star, Reply, Summarize), high-contrast subject typography, sender avatar header card with security tracker badge (`ShieldCheckmarkRegular`), styled AI summary card with sparkle gradient, and quick-reply recommendation chips.
+  6. **Notch Dropdown Panel:** Upgraded the top-notch triage dropdown to a floating dynamic island with curved bottom corners, glassmorphism backdrop blur, sender avatars, and keyboard navigation hints.
+- **Consequences:** All acceptance criteria and test contracts preserved with zero functional regressions (49/49 vitest tests green, 124/124 cargo tests green, clippy clean, tsc clean, vite production build green).
+
+## D-047: Sign in with ChatGPT for plan-backed AI (2026-11-08)
+
+- **Context:** OpenAI's documented open-source client contract lets local
+  apps use a user's ChatGPT Plus/Pro plan for Responses API requests with no
+  API key (dynamic client registration, loopback PKCE, `store: false` /
+  `stream: true`; verified against developers.openai.com 2026-11-08).
+- **Decision:** Implement it as engine `chatgpt`. `ai/siwc.rs` owns the
+  browser flow (loopback `127.0.0.1:<ephemeral>/auth/callback`, dynamic
+  registration via `dynamic_agent_client` + persisted `ext_agent_host_id`,
+  issued `oaiapp_` client id stored for reuse). Tokens and the discovered
+  model live in Credential Manager under `cracktivity.chatgpt.*`; `auth.openai.com`
+  joins the D-015 egress inventory. Inference goes through a new
+  `chat::Responses` engine (`store: false`, `stream: true`). MCP access is
+  refused for this engine: the plan connection is scoped to the app itself.
+- **Alternatives:** the OpenAI DevKit SDK (noncommercial license, Node-only
+  runtime; protocol reimplemented in Rust instead); Chat Completions with the
+  OAuth token (not the documented contract).
+- **Consequences:** id_token JWT signature validation against JWKS is
+  deferred (token fetched directly over TLS from the pinned endpoint; record
+  as hardening). Settings gains a connect/disconnect row; ai_status reports
+  `chatgpt_email`.
+
+## D-048: LOW write tier becomes the project's fine-tuned model (2026-11-08)
+
+- **Context:** `chirag-gamer/cracktivity-email-qwen3-0.6b` (QLoRA fine-tune
+  of Qwen3-0.6B on aeslc email summarization, Q4_K_M, 397 MB) replaces the
+  generic Qwen 1.5B as the on-device writing model for LOW-tier machines.
+  Pin verified live via the HuggingFace API (LFS sha256, commit 8f80aa22).
+- **Decision:** New LOW-tier pin; the 1.5B moves to a downloadable fallback
+  (the Phi-4 pattern), and `write_model_for` excludes fallbacks by filename.
+- **Consequences:** the fine-tune is CC BY-NC-SA 4.0 (project-owned model);
+  the earlier LOW pin test now asserts the fine-tune file with the 1.5B
+  fallback asserted as a reachable pin.

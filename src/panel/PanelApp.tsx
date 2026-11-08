@@ -5,9 +5,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Text } from "@fluentui/react-components";
+import { ExternalLink, Mail } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
-import { relativeTime, senderName } from "../shared/format";
+import { relativeTime, senderName, addressHue } from "../shared/format";
 import type { MessageRow } from "../shared/types";
 import { useKeyboard } from "../main/keyboard";
 import {
@@ -28,8 +29,6 @@ async function loadQueue(): Promise<MessageRow[]> {
   return msgs
     .flat()
     .filter((m) => m.unread)
-    // The same thread can surface via more than one account view; the row id
-    // is globally unique, so dedupe on it before newest-first ordering.
     .filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i)
     .sort((a, b) => b.date - a.date)
     .slice(0, 50);
@@ -42,8 +41,6 @@ export function PanelApp() {
   const queueRef = useRef(queue);
   queueRef.current = queue;
 
-  // The main window syncs the DB scheme into the mirror; adopt it here too,
-  // and follow in-window changes from Settings (D-046).
   useEffect(() => {
     syncKeymapScheme(setKeymap);
     return onKeymapChange(setKeymap);
@@ -54,7 +51,6 @@ export function PanelApp() {
   }, []);
   useEffect(refresh, [refresh]);
 
-  // Keep the keyboard cursor visible in the 640px panel.
   useEffect(() => {
     document
       .querySelectorAll('[data-testid="panel-row"]')
@@ -67,24 +63,21 @@ export function PanelApp() {
     let disposed = false;
     void (async () => {
       try {
-      const { listen } = await import("@tauri-apps/api/event");
-      const un1 = await listen("store-changed", refresh);
-      const un2 = await listen("panel-visibility", (e) => {
-        // The Rust side only shows/hides the HWND; the CSS slide-down is
-        // driven here (D-011: never animate the Win32 window).
-        document.body.classList.toggle("collapsed", e.payload !== true);
-        if (e.payload === true) refresh();
-      });
-      const safe = () => {
-        // _unlisten is async; a sync try/catch cannot see its rejection.
-        void Promise.resolve(un1()).catch(() => {});
-        void Promise.resolve(un2()).catch(() => {});
-      };
-      if (disposed) {
-        safe();
-      } else {
-        unlisten = safe;
-      }
+        const { listen } = await import("@tauri-apps/api/event");
+        const un1 = await listen("store-changed", refresh);
+        const un2 = await listen("panel-visibility", (e) => {
+          document.body.classList.toggle("collapsed", e.payload !== true);
+          if (e.payload === true) refresh();
+        });
+        const safe = () => {
+          void Promise.resolve(un1()).catch(() => {});
+          void Promise.resolve(un2()).catch(() => {});
+        };
+        if (disposed) {
+          safe();
+        } else {
+          unlisten = safe;
+        }
       } catch {
         // No Tauri event bridge (tests): the queue stays static.
       }
@@ -95,7 +88,6 @@ export function PanelApp() {
     };
   }, [refresh]);
 
-  // Deep-link into the main window (FR-28: usable during normal app usage).
   const openMain = async () => {
     const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     const main = await WebviewWindow.getByLabel("main");
@@ -139,40 +131,63 @@ export function PanelApp() {
   return (
     <div className="panel-shell" data-testid="panel-app">
       <header className="panel-header">
-        <Text weight="semibold">{S.panelTitle}</Text>
-        <button className="link-button" onClick={() => void openMain()} data-testid="panel-open-main">
-          {S.openInApp}
+        <div className="panel-header-title">
+          <Mail fill="currentColor" style={{ color: "var(--accent)" }} />
+          <span>{S.panelTitle}</span>
+        </div>
+        <button
+          className="link-button"
+          onClick={() => void openMain()}
+          data-testid="panel-open-main"
+          style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+        >
+          <span>{S.openInApp}</span>
+          <ExternalLink />
         </button>
       </header>
+
       {queue.length === 0 ? (
         <div className="empty panel-empty" role="status">
           {S.panelEmpty}
         </div>
       ) : (
         <div role="listbox" aria-label={S.panelTitle}>
-          {queue.map((m, i) => (
-            <button
-              key={m.id}
-              role="option"
-              aria-selected={i === idx}
-              className={`panel-row${i === idx ? " selected" : ""}`}
-              data-testid="panel-row"
-              onMouseEnter={() => setIdx(i)}
-              onClick={() => setIdx(i)}
-            >
-              <div className="row-main">
-                <span className="row-sender strong">{senderName(m.from[0] ?? null)}</span>
-                <span className="row-time">{relativeTime(m.date)}</span>
-              </div>
-              <div className="row-subject">{m.subject}</div>
-              <div className="row-snippet">{m.snippet}</div>
-            </button>
-          ))}
+          {queue.map((m, i) => {
+            const sender = senderName(m.from[0] ?? null);
+            const initial = (sender || "U")[0].toUpperCase();
+            const hue = addressHue(m.from[0]?.email ?? sender);
+
+            return (
+              <button
+                key={m.id}
+                role="option"
+                aria-selected={i === idx}
+                className={`panel-row${i === idx ? " selected" : ""}`}
+                data-testid="panel-row"
+                onMouseEnter={() => setIdx(i)}
+                onClick={() => setIdx(i)}
+              >
+                <div className="row-main">
+                  <span
+                    className="row-avatar"
+                    style={{ background: `hsl(${hue} 65% 42%)` }}
+                  >
+                    {initial}
+                  </span>
+                  <span className="row-sender strong">{sender}</span>
+                  <span className="row-time">{relativeTime(m.date)}</span>
+                </div>
+                <div className="row-subject">{m.subject}</div>
+                <div className="row-snippet">{m.snippet}</div>
+              </button>
+            );
+          })}
         </div>
       )}
+
       <footer className="panel-footer">
         <Text size={100}>{S.panelHints}</Text>
-        {queue.length > 0 && <Badge appearance="ghost">{queue.length}</Badge>}
+        {queue.length > 0 && <Badge appearance="filled">{queue.length}</Badge>}
       </footer>
     </div>
   );

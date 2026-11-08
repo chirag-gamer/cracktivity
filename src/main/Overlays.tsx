@@ -9,6 +9,7 @@ import {
   DialogTitle,
   Input,
 } from "@fluentui/react-components";
+import { Search } from "lucide-react";
 import { S } from "../shared/strings";
 import { KEYMAP_SCHEMES, shortcutRows, type KeymapScheme } from "./keymap";
 
@@ -28,7 +29,6 @@ export function ShortcutsOverlay({
     ["Esc", S.shortcutEsc],
     ["?", S.shortcutSelf],
   ];
-  // FR-30 AC: the cheat sheet carries the active keymap label.
   const schemeLabel =
     KEYMAP_SCHEMES.find((k) => k.id === scheme)?.label ?? scheme;
   return (
@@ -36,15 +36,17 @@ export function ShortcutsOverlay({
       <DialogSurface>
         <DialogBody>
           <DialogTitle>
-            {S.shortcutsTitle} — {schemeLabel}
+            {S.shortcutsTitle}. {schemeLabel}
           </DialogTitle>
           <DialogContent>
-            <table className="shortcut-table" data-testid="shortcuts-overlay">
+            <table className="shortcut-table" data-testid="shortcuts-overlay" style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 6px" }}>
               <tbody>
                 {rows.map(([k, v]) => (
                   <tr key={k}>
-                    <td className="key">{k}</td>
-                    <td>{v}</td>
+                    <td className="key">
+                      <kbd>{k}</kbd>
+                    </td>
+                    <td style={{ color: "var(--fg-secondary)", fontSize: 13 }}>{v}</td>
                   </tr>
                 ))}
               </tbody>
@@ -82,8 +84,7 @@ export function CommandPalette({
     () => commands.filter((c) => c.label.toLowerCase().includes(q.toLowerCase())),
     [commands, q],
   );
-  // Keyboard-first (FR-30): arrows move, Enter runs. The keys are consumed
-  // here so the window-level handler never sees them.
+
   const onKey = (e: React.KeyboardEvent) => {
     if (filtered.length === 0) return;
     if (e.key === "ArrowDown") {
@@ -101,23 +102,28 @@ export function CommandPalette({
       onClose();
     }
   };
+
   return (
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface className="palette-surface">
         <DialogBody>
           <DialogTitle>{S.commands}</DialogTitle>
           <DialogContent>
-            <Input
-              autoFocus
-              placeholder={S.palettePlaceholder}
-              value={q}
-              onChange={(_, d) => {
-                setQ(d.value);
-                setHi(0);
-              }}
-              onKeyDown={onKey}
-              data-testid="palette-input"
-            />
+            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              <Input
+                autoFocus
+                contentBefore={<Search />}
+                placeholder={S.palettePlaceholder}
+                value={q}
+                onChange={(_, d) => {
+                  setQ(d.value);
+                  setHi(0);
+                }}
+                onKeyDown={onKey}
+                data-testid="palette-input"
+                style={{ width: "100%" }}
+              />
+            </div>
             <div
               className="palette-list"
               role="listbox"

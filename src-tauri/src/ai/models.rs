@@ -54,8 +54,20 @@ impl ModelPin {
 /// The write-tier model per hardware class (D-031 pins; classify-tier
 /// residency is deferred per D-032 — the file stays pinned for a future
 /// task that justifies it).
-pub const MODELS: [ModelPin; 4] = [
-    // LOW write tier
+pub const MODELS: [ModelPin; 5] = [
+    // LOW write tier: the project's fine-tuned email model (QLoRA on
+    // Qwen3-0.6B, aeslc summarization). CC BY-NC-SA 4.0, owned by the
+    // cracktivity project (D-048).
+    ModelPin {
+        tier: Tier::Low,
+        repo: "chirag-gamer/cracktivity-email-qwen3-0.6b",
+        revision: "8f80aa22862260c80e2b956d30b25175926bf334",
+        file: "cracktivity-email-qwen3-0.6b-Q4_K_M.gguf",
+        size_bytes: 396_704_800,
+        sha256: "c57bdbc6934ec0e1ad64be5ec05d773a1144c5ddb665063c75f725bfbe332598",
+    },
+    // LOW fallback (Apache-2.0) - downloadable on demand if the fine-tune is
+    // ever pulled from HuggingFace.
     ModelPin {
         tier: Tier::Low,
         repo: "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
@@ -93,11 +105,18 @@ pub const MODELS: [ModelPin; 4] = [
     },
 ];
 
+/// Fallback pins are downloadable on demand but never the default write
+/// model for their tier (the Phi-4 pattern, D-031; the LOW 1.5B joins it
+/// with D-048).
+fn is_fallback(m: &ModelPin) -> bool {
+    m.file.contains("Phi-4-mini") || m.file.contains("qwen2.5-1.5b-instruct")
+}
+
 /// The model pin a tier uses for writing.
 pub fn write_model_for(tier: Tier) -> &'static ModelPin {
     MODELS
         .iter()
-        .find(|m| m.tier == tier && !m.file.contains("Phi-4-mini"))
+        .find(|m| m.tier == tier && !is_fallback(m))
         .expect("every tier has a write model")
 }
 
@@ -213,10 +232,14 @@ mod tests {
                 "resolve form is mandatory (without it HF returns 404)"
             );
         }
-        // LOW tier gets the 1.5B (FR-23).
+        // LOW tier gets the fine-tuned email model (D-048).
         assert_eq!(
             write_model_for(Tier::Low).file,
-            "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+            "cracktivity-email-qwen3-0.6b-Q4_K_M.gguf"
         );
+        // The LOW fallback stays reachable as a plain pin.
+        assert!(MODELS
+            .iter()
+            .any(|m| m.file == "qwen2.5-1.5b-instruct-q4_k_m.gguf"));
     }
 }

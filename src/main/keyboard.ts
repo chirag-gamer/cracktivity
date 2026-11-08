@@ -1,7 +1,7 @@
 /**
  * Keyboard-first navigation model (FR-30). One global keydown handler owned
  * by the main window; j/k move a *selection* (controlled state, not DOM
- * focus — Fluent's tabster moves focus, which is the wrong tool here).
+ * focus. Fluent's tabster moves focus, which is the wrong tool here).
  *
  * When an input has focus, single-letter keys are left for typing; Escape
  * and Ctrl-combos always pass through.

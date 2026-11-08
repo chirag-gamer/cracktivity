@@ -16,6 +16,7 @@ static HOSTS: Mutex<Option<BTreeSet<String>>> = Mutex::new(None);
 pub const HOST_MS_OAUTH: &str = "login.microsoftonline.com";
 pub const HOST_HUGGINGFACE: &str = "huggingface.co";
 pub const HOST_OPENAI: &str = "api.openai.com";
+pub const HOST_OPENAI_AUTH: &str = "auth.openai.com";
 pub const HOST_XAI: &str = "api.x.ai";
 pub const HOST_ANTHROPIC: &str = "api.anthropic.com";
 /// llama-server + the loopback image fetch proxy.
@@ -28,6 +29,7 @@ pub const STATIC_EGRESS_HOSTS: &[&str] = &[
     HOST_MS_OAUTH,
     HOST_HUGGINGFACE,
     HOST_OPENAI,
+    HOST_OPENAI_AUTH,
     HOST_XAI,
     HOST_ANTHROPIC,
     HOST_LOOPBACK,
@@ -117,6 +119,8 @@ mod tests {
             // OAuth endpoints (oauth.rs consts).
             host_of(crate::platform::oauth::AUTHORIZE_URL),
             host_of(crate::platform::oauth::TOKEN_URL),
+            host_of(crate::ai::siwc::AUTHORIZE_URL),
+            host_of(crate::ai::siwc::TOKEN_URL),
             // Pinned model download host (models.rs).
             host_of(&crate::ai::models::MODELS[0].download_url()),
             // BYO engine endpoints (chat.rs).

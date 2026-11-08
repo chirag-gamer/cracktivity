@@ -1,4 +1,4 @@
-/** L1: Settings surface (Phase 5) — appearance, keymap, hotkey, diagnostics. */
+/** L1: Settings surface (Phase 5). appearance, keymap, hotkey, diagnostics. */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import React from "react";

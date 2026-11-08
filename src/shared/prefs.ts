@@ -19,7 +19,7 @@ export function writePref(dbKey: string, localKey: string, value: string): void 
   try {
     localStorage.setItem(localKey, value);
   } catch {
-    /* storage unavailable — DB row still holds the truth */
+    /* storage unavailable. DB row still holds the truth */
   }
   void invoke("set_setting", { key: dbKey, value }).catch(() => {});
 }

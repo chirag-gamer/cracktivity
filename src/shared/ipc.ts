@@ -149,6 +149,8 @@ export const ipc = {
   aiDeleteModel: () => invoke<void>("ai_delete_model"),
   aiSetKey: (kind: string, key: string | null) =>
     invoke<void>("ai_set_key", { kind, key: key ?? null }),
+  aiChatgptConnect: () => invoke<string>("ai_chatgpt_connect"),
+  aiChatgptDisconnect: () => invoke<void>("ai_chatgpt_disconnect"),
   aiStream: (
     command: "ai_summarize" | "ai_draft_reply",
     args: Record<string, unknown>,

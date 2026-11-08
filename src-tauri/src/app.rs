@@ -1376,6 +1376,7 @@ pub async fn ai_status(state: State<'_, AppState>) -> CmdResult<serde_json::Valu
     Ok(serde_json::json!({
         "enabled": s.enabled,
         "engine": s.engine.as_str(),
+        "chatgpt_email": crate::ai::siwc::load_stored().map(|c| c.email),
         "tier": tier.as_str(),
         "tier_reason": format!(
             "{} GB RAM, {} cores → {} tier",
@@ -1469,6 +1470,28 @@ pub async fn ai_set_key(
         _ => crate::platform::providers::delete_account_secret(target),
     }
     .map_err(|e| e.to_string())
+}
+
+/// Runs the Sign in with ChatGPT browser flow (D-047): dynamic client
+/// registration on first use, plan-usage scopes, loopback callback. Blocking
+/// and user-paced, so it runs on a worker thread and stores the connection
+/// in Credential Manager. Returns the connected account email.
+#[tauri::command]
+pub async fn ai_chatgpt_connect(state: State<'_, AppState>) -> CmdResult<String> {
+    let _ = state;
+    let email = tauri::async_runtime::spawn_blocking(crate::ai::siwc::connect)
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|c| c.email)
+        .map_err(|e| e.to_string())?;
+    Ok(email)
+}
+
+/// Removes the stored ChatGPT connection (tokens + registration).
+#[tauri::command]
+pub async fn ai_chatgpt_disconnect() -> CmdResult<()> {
+    crate::ai::siwc::disconnect();
+    Ok(())
 }
 
 /// Builds the plain-text transcript for a thread (summarize + draft input).
@@ -1578,6 +1601,23 @@ fn run_ai_task(
                 }
                 crate::ai::EngineKind::Xai => {
                     Box::new(crate::ai::chat::OpenAiCompat::xai(&key, &model))
+                }
+                crate::ai::EngineKind::ChatGpt => {
+                    // Plan-backed inference: OAuth access token from Sign in
+                    // with ChatGPT against the Responses API path (D-047).
+                    // The engine keeps the OpenAI-compatible wire shape; the
+                    // token endpoint difference lives in siwc.rs.
+                    let stored = crate::ai::siwc::load_stored()
+                        .ok_or("not signed in to ChatGPT (Settings, AI)")?;
+                    let access = if crate::ai::siwc::needs_refresh(&stored) {
+                        crate::ai::siwc::refresh(&stored).map_err(|e| e.to_string())?;
+                        crate::ai::siwc::load_stored()
+                            .ok_or("ChatGPT connection vanished")?
+                            .access
+                    } else {
+                        stored.access
+                    };
+                    Box::new(crate::ai::chat::Responses::new(access, &model))
                 }
                 crate::ai::EngineKind::Local => unreachable!("matched above"),
             };

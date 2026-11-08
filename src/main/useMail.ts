@@ -93,7 +93,7 @@ export function useMail(): MailState {
     return () =>
       unsubs.forEach((u) =>
         // The unlisten fns are async under the hood; in test environments
-        // (no event bridge) they reject — never let that escape.
+        // (no event bridge) they reject. never let that escape.
         u.then((f) => void Promise.resolve(f?.()).catch(() => {})),
       );
   }, [reloadLists]);

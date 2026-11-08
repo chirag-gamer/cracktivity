@@ -1,4 +1,4 @@
-/** L1: theme choice resolution (Phase 5/D-040) — provider + document surface. */
+/** L1: theme choice resolution (Phase 5/D-040). provider + document surface. */
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import React from "react";

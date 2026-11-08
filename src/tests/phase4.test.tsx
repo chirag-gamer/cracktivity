@@ -1,5 +1,5 @@
 /**
- * L1: Phase-4 frontend flows over mockIPC — follow-ups view (FR-13),
+ * L1: Phase-4 frontend flows over mockIPC. follow-ups view (FR-13),
  * subscription cleanup (FR-14: POST only on click + undo), composer
  * (FR-17/18), onboarding dialog (FR-20), reader AI affordances (FR-21/22)
  * and tracking badges (FR-15).

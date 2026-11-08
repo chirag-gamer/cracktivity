@@ -2,11 +2,12 @@
  * Settings (Phase 4/5): AI (master switch, tier, engine, BYO keys, model
  * manager), MCP (safety gate, one-click registrations, audit log), general
  * (follow-up days, server-side search), appearance (theme, keymap scheme,
- * panel hotkey — FR-28/FR-30 AC), and diagnostics (hosts, storage, log
- * viewer, prune — FR-32).
+ * panel hotkey. FR-28/FR-30 AC), and diagnostics (hosts, storage, log
+ * viewer, prune. FR-32).
  */
 import { useCallback, useEffect, useState } from "react";
 import { Switch, Text } from "@fluentui/react-components";
+import { Bot, Eye, History, KeyRound, Settings } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
 import { useThemeChoice, type ThemeChoice } from "../shared/theme";
@@ -18,11 +19,13 @@ import {
 } from "./keymap";
 import type { AiStatus, AuditRow, LogLine } from "../shared/types";
 
-const ENGINES = ["local", "openai", "anthropic", "xai"] as const;
+const ENGINES = ["local", "chatgpt", "openai", "anthropic", "xai"] as const;
 const TIERS = ["low", "mid", "high"] as const;
 const MCP_CLIENTS = ["claude_desktop", "claude_code", "codex", "cursor"] as const;
 
 export function SettingsView() {
+  const [chatgptBusy, setChatgptBusy] = useState(false);
+  const [chatgptError, setChatgptError] = useState<string | null>(null);
   const [ai, setAi] = useState<AiStatus | null>(null);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [audit, setAudit] = useState<AuditRow[]>([]);
@@ -97,7 +100,10 @@ export function SettingsView() {
   return (
     <div className="pane-list settings" data-testid="settings-view">
       <section aria-label={S.settingsAi}>
-        <h3>{S.settingsAi}</h3>
+        <h3>
+          <Bot />
+          <span>{S.settingsAi}</span>
+        </h3>
         {ai && (
           <>
             <Switch
@@ -139,6 +145,53 @@ export function SettingsView() {
                 ))}
               </select>
             </div>
+            {ai.engine === "chatgpt" && (
+              <div className="field-row" data-testid="ai-chatgpt-row">
+                <span>
+                  {ai.chatgpt_email
+                    ? `${S.aiChatgptConnected} ${ai.chatgpt_email}`
+                    : S.aiChatgptHint}
+                </span>
+                {ai.chatgpt_email ? (
+                  <button
+                    className="link-button"
+                    disabled={chatgptBusy}
+                    onClick={() => {
+                      setChatgptBusy(true);
+                      ipc
+                        .aiChatgptDisconnect()
+                        .then(reload)
+                        .catch(() => {})
+                        .finally(() => setChatgptBusy(false));
+                    }}
+                    data-testid="ai-chatgpt-disconnect"
+                  >
+                    {S.aiChatgptDisconnect}
+                  </button>
+                ) : (
+                  <button
+                    className="primary-button"
+                    disabled={chatgptBusy}
+                    onClick={() => {
+                      setChatgptBusy(true);
+                      ipc
+                        .aiChatgptConnect()
+                        .then(() => reload())
+                        .catch((e) => setChatgptError(String(e)))
+                        .finally(() => setChatgptBusy(false));
+                    }}
+                    data-testid="ai-chatgpt-connect"
+                  >
+                    {chatgptBusy ? S.aiChatgptBusy : S.aiChatgptConnect}
+                  </button>
+                )}
+              </div>
+            )}
+            {chatgptError && (
+              <div className="error-text" role="alert" data-testid="ai-chatgpt-error">
+                {chatgptError}
+              </div>
+            )}
             <div className="field-row">
               <span data-testid="ai-model-state">
                 {ai.model_downloaded ? S.aiModelReady : S.aiModelDownload}
@@ -192,7 +245,10 @@ export function SettingsView() {
       </section>
 
       <section aria-label={S.settingsMcp}>
-        <h3>{S.settingsMcp}</h3>
+        <h3>
+          <KeyRound />
+          <span>{S.settingsMcp}</span>
+        </h3>
         <Switch
           checked={bool("mcp.allow_send")}
           label={S.mcpAllowSend}
@@ -235,7 +291,10 @@ export function SettingsView() {
       </section>
 
       <section aria-label={S.settingsGeneral}>
-        <h3>{S.settingsGeneral}</h3>
+        <h3>
+          <Settings />
+          <span>{S.settingsGeneral}</span>
+        </h3>
         <Switch
           checked={bool("search.also_server")}
           label={S.settingsSearch}
@@ -260,7 +319,10 @@ export function SettingsView() {
       </section>
 
       <section aria-label={S.settingsAppearance}>
-        <h3>{S.settingsAppearance}</h3>
+        <h3>
+          <Eye />
+          <span>{S.settingsAppearance}</span>
+        </h3>
         <div className="field-row">
           <label htmlFor="theme-choice">{S.themeChoice}</label>
           <select
@@ -317,7 +379,10 @@ export function SettingsView() {
       </section>
 
       <section aria-label={S.diagnostics}>
-        <h3>{S.diagnostics}</h3>
+        <h3>
+          <History />
+          <span>{S.diagnostics}</span>
+        </h3>
         <div className="field-row" data-testid="diagnostics-hosts">
           <span>{S.diagnosticsHosts}:</span>
           {hosts && hosts.length > 0 ? (

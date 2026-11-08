@@ -109,7 +109,7 @@ export interface SubscriptionRow {
   list_unsub_post: string | null;
 }
 
-/** Where an archived message went — the FR-14 Undo input. */
+/** Where an archived message went. the FR-14 Undo input. */
 export interface ArchivedRef {
   account_id: number;
   from_folder: string;
@@ -140,6 +140,7 @@ export interface AiStatus {
   model_downloaded: boolean;
   sidecar_running: boolean;
   byo_configured: { openai: boolean; anthropic: boolean; xai: boolean };
+  chatgpt_email?: string | null;
   model_disk_bytes: number;
 }
 

@@ -9,8 +9,8 @@ export const S = {
   noMail: "No mail here yet",
   noMatches: "No matches",
   noSelection: "Select a message to read it",
-  offlineBanner: "Offline — will retry automatically",
-  authBanner: "Sign-in problem — check the account settings",
+  offlineBanner: "Offline. Will retry automatically",
+  authBanner: "Sign-in problem. Check the account settings",
   blockedImages: (n: number) => `Blocked ${n} remote image${n === 1 ? "" : "s"}`,
   commands: "Commands",
   palettePlaceholder: "Type a command…",
@@ -79,7 +79,7 @@ export const S = {
   sending: "Sending…",
   draftSaved: "Draft saved",
   sendFailed: "Send failed",
-  queuedOffline: "Queued — will send when connected",
+  queuedOffline: "Queued. Will send when connected",
 
   // -- Phase 4: AI (FR-20..25)
   aiSection: "On-device AI",
@@ -95,13 +95,18 @@ export const S = {
   aiDraftReply: "Draft reply (AI)",
   aiInstruction: "How should the reply sound?",
   aiEngine: "Engine",
+  aiChatgptConnect: "Sign in with ChatGPT",
+  aiChatgptConnected: "Connected:",
+  aiChatgptDisconnect: "Disconnect",
+  aiChatgptHint: "Use your ChatGPT Plus or Pro plan for AI. Opens your browser.",
+  aiChatgptBusy: "Waiting for the browser...",
   aiKeyPlaceholder: "API key (stored in Credential Manager)",
   aiKeySet: "key saved",
   aiSaveKey: "Save key",
-  aiFallback: "API unreachable — used the local model instead",
+  aiFallback: "API unreachable. Used the local model instead",
   aiDisabledHint: "Enable AI in Settings to use summaries and drafts",
   aiCostNote:
-    "Runs on your machine. Downloads a ~1–3 GB model from HuggingFace once. No mail content leaves your device unless you configure a cloud API key.",
+    "Runs on your machine. Downloads a ~1-3 GB model from HuggingFace once. No mail content leaves your device unless you configure a cloud API key.",
 
   // -- Phase 4: tracking badges (FR-15)
   blockedTrackers: (n: number) => `Blocked ${n} tracker${n === 1 ? "" : "s"}`,
@@ -119,7 +124,7 @@ export const S = {
   settingsSearch: "Also search the mail server",
   mcpAllowSend: "Allow agents to send email (two-step)",
   mcpRegister: "Add to",
-  mcpRegistered: "Registered — restart the client to see it",
+  mcpRegistered: "Registered. Restart the client to see it",
   mcpAudit: "Agent activity log",
   settingsStorage: "Storage",
   diagnostics: "Diagnostics",
@@ -127,7 +132,7 @@ export const S = {
   storageDb: "Mail database",
   storageModels: "AI models",
   noHosts: "No remote hosts contacted this session",
-  uncached: "on server — not cached",
+  uncached: "on server, not cached",
 
   // -- Phase 5: appearance + diagnostics (FR-28/30/32, NFR-4)
   settingsAppearance: "Appearance",
@@ -141,7 +146,7 @@ export const S = {
   hotkeyDefault: "Ctrl+Shift+Space",
   hotkeySaved: "Hotkey updated",
   hotkeyImeNote:
-    "Must include Ctrl, Alt or Super/Command. Shift+Space alone is not allowed — it toggles full-width input on East-Asian IMEs.",
+    "Must include Ctrl, Alt or Super/Command. Shift+Space alone is not allowed. It would toggle full-width input on East-Asian IMEs.",
   logsTitle: "Session log",
   logsEmpty: "No events logged this session",
   clearLogs: "Clear log",
@@ -154,13 +159,19 @@ export const S = {
   onboardingAiBody: S_aiBody(),
   onboardingAccept: "Enable (recommended)",
   onboardingDecline: "Not now",
-  onboardingNext: "Add your first account",
+  onboardingNext: "Continue",
+  onboardingPrivacy: "Runs on your machine. No telemetry, ever.",
+  onboardingLookTitle: "Pick a look",
+  onboardingLookBody: "You can change this any time in Settings. This just sets the first mood.",
+  onboardingAccountBody: "Connect Gmail, iCloud, Zoho, Yahoo or any IMAP account. Most people are done in under a minute.",
+  onboardingSkip: "Skip for now",
+  onboardingDoneHint: "You can add more accounts and manage everything from Settings.",
 } as const;
 
 function S_aiBody(): string {
   return (
     "cracktivity can summarize threads and draft replies with a small AI " +
-    "model that runs entirely on your PC. It costs about 1–3 GB of disk " +
-    "space and 1–4 GB of RAM while in use. Nothing is sent anywhere."
+    "model that runs entirely on your PC. It costs about 1-3 GB of disk " +
+    "space and 1-4 GB of RAM while in use. Nothing is sent anywhere."
   );
 }

@@ -1,4 +1,4 @@
-/** L1: notch panel triage UI (FR-28) — queue render + e/Esc quick actions. */
+/** L1: notch panel triage UI (FR-28). queue render + e/Esc quick actions. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";

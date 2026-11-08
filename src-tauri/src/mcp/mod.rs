@@ -390,6 +390,13 @@ impl CracktivityMcp {
                 crate::ai::EngineKind::Xai => {
                     Box::new(crate::ai::chat::OpenAiCompat::xai(&key, &model))
                 }
+                crate::ai::EngineKind::ChatGpt => {
+                    // D-047: the ChatGPT-plan connection is scoped to the
+                    // app's own AI features; MCP agents use BYO API keys.
+                    return Err(err(
+                        "the ChatGPT plan connection runs only inside the cracktivity app; configure a BYO engine for MCP use".to_string(),
+                    ));
+                }
                 crate::ai::EngineKind::Local => unreachable!("checked above"),
             };
             let passes = crate::ai::prompts::summarize_messages(&transcript);

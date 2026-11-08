@@ -1,14 +1,16 @@
 /**
  * Subscription cleanup (FR-14): senders ranked never-opened first. The
- * one-click unsubscribe POST fires ONLY on the button click (RFC 8058 —
+ * one-click unsubscribe POST fires ONLY on the button click (RFC 8058
  * no automatic unsubscribe ever); senders without a POST endpoint fall
  * back to opening their mailto: link. Bulk archive is reversible with
  * Undo inside the session.
  */
 import { useCallback, useEffect, useState } from "react";
 import { Text } from "@fluentui/react-components";
+import { Archive, Brush, RotateCcw } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
+import { addressHue } from "../shared/format";
 import type { ArchivedRef, SubscriptionRow } from "../shared/types";
 
 type UnsubState = { sender: string; state: "busy" | "done" | "failed" };
@@ -79,28 +81,44 @@ export function CleanupView() {
     <div className="pane-list" data-testid="cleanup-view" role="list">
       {archivedCount !== null && (
         <div className="undo-bar" data-testid="undo-bar">
+          <Archive />
           <span>{S.archived(archivedCount)}</span>
-          <button className="link-button" onClick={doUndo} data-testid="undo-archive">
-            {S.undo}
+          <button className="link-button" onClick={doUndo} data-testid="undo-archive" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <RotateCcw />
+            <span>{S.undo}</span>
           </button>
         </div>
       )}
-      {loading && <div className="empty">{S.loading}</div>}
+      {loading && <div className="pane-list empty">{S.loading}</div>}
       {!loading && rows.length === 0 && (
-        <div className="empty" role="status">
-          {S.cleanupEmpty}
+        <div className="pane-list empty" role="status">
+          <Brush style={{ fontSize: 36, opacity: 0.4, marginBottom: 8 }} />
+          <Text weight="semibold" size={400}>{S.cleanupEmpty}</Text>
         </div>
       )}
       {rows.map((r) => {
         const state = unsub?.sender === r.sender_email ? unsub.state : null;
+        const displayName = r.sender_name ?? r.sender_email;
+        const initial = (displayName || "U")[0].toUpperCase();
+        const hue = addressHue(r.sender_email);
+
         return (
           <div key={`${r.account_id}-${r.sender_email}`} className="row" role="listitem">
             <div className="row-main">
+              <span
+                className="row-avatar"
+                style={{ background: `hsl(${hue} 65% 42%)` }}
+              >
+                {initial}
+              </span>
               <span className="row-sender strong">
-                {r.sender_name ?? r.sender_email}
+                {displayName}
+              </span>
+              <span className="row-badge">
+                {S.cleanupOpened(r.opened, r.received)}
               </span>
               <span className="row-time">
-                {S.cleanupReceived(r.received)} · {S.cleanupOpened(r.opened, r.received)}
+                {S.cleanupReceived(r.received)}
               </span>
             </div>
             <div className="row-snippet">{r.sender_email}</div>
@@ -110,21 +128,27 @@ export function CleanupView() {
                 data-testid={`unsub-${r.sender_email}`}
                 disabled={state === "busy" || !r.list_unsubscribe}
                 onClick={() => doUnsubscribe(r)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
               >
-                {state === "busy"
-                  ? S.unsubscribing
-                  : state === "done"
-                    ? S.unsubscribed
-                    : r.list_unsub_post
-                      ? S.unsubscribe
-                      : S.unsubscribeMailto}
+                <Brush />
+                <span>
+                  {state === "busy"
+                    ? S.unsubscribing
+                    : state === "done"
+                      ? S.unsubscribed
+                      : r.list_unsub_post
+                        ? S.unsubscribe
+                        : S.unsubscribeMailto}
+                </span>
               </button>
               <button
                 className="link-button"
                 data-testid={`archive-${r.sender_email}`}
                 onClick={() => doBulkArchive(r)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
               >
-                {S.archiveAll}
+                <Archive />
+                <span>{S.archiveAll}</span>
               </button>
             </div>
             {state === "failed" && (

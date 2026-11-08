@@ -1,7 +1,7 @@
 /**
  * L1: virtualized list sanity (NFR-1) + row rendering + selection.
  * jsdom has no layout, so the virtualizer renders only the initial window
- * plus overscan — which is exactly what we assert: never all rows.
+ * plus overscan. which is exactly what we assert: never all rows.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";

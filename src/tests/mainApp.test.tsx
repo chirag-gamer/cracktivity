@@ -1,5 +1,5 @@
 /**
- * L1: MainApp integration over mockIPC — the offline hydration story (FR-8)
+ * L1: MainApp integration over mockIPC. the offline hydration story (FR-8)
  * plus the core keyboard flow: load → j/k → open → reader → u/e/s → Ctrl+N.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -122,7 +122,7 @@ describe("MainApp", () => {
       await findAllByTestId("thread-row");
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
       // Reader cards prove the thread contents loaded (no auto-read burst
-      // here — nothing unread — so this is the only load signal).
+      // here. nothing unread. so this is the only load signal).
       await findAllByTestId("msg-card");
       const n = uReads.length; // auto-mark fires nothing: none unread
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "u", bubbles: true }));

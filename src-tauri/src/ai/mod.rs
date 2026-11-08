@@ -9,6 +9,7 @@ pub mod manager;
 pub mod models;
 pub mod prompts;
 pub mod sidecar;
+pub mod siwc;
 
 use std::path::{Path, PathBuf};
 
@@ -31,6 +32,7 @@ pub fn byo_key_target(kind: EngineKind) -> &'static str {
         EngineKind::OpenAi => "cracktivity.byo.openai",
         EngineKind::Anthropic => "cracktivity.byo.anthropic",
         EngineKind::Xai => "cracktivity.byo.xai",
+        EngineKind::ChatGpt => "cracktivity.chatgpt.access",
         EngineKind::Local => "cracktivity.byo.local",
     }
 }

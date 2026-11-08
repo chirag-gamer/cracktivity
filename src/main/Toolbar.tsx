@@ -4,11 +4,11 @@
  */
 import { useState } from "react";
 import {
-  Input,
   MessageBar,
   MessageBarBody,
   MessageBarTitle,
 } from "@fluentui/react-components";
+import { CircleAlert, Plus, Search, TriangleAlert } from "lucide-react";
 import { S } from "../shared/strings";
 import type { AccountStatus, ImportanceFilter, SearchRow, ThreadRow } from "../shared/types";
 import { relativeTime, senderName } from "../shared/format";
@@ -69,22 +69,34 @@ export function Toolbar({
             </button>
           ))}
         </div>
-        <Input
-          type="search"
-          placeholder={S.search}
-          value={q}
-          onChange={(_, d) => void run(d.value)}
-          data-testid="search-input"
-          id="global-search"
-        />
+
+        <div className="search-wrap">
+          <span className="search-icon-badge">
+            <Search />
+          </span>
+          <input
+            type="search"
+            placeholder={S.search}
+            value={q}
+            onChange={(e) => void run(e.target.value)}
+            data-testid="search-input"
+            id="global-search"
+            aria-label={S.search}
+          />
+          <span className="search-kbd-badge" title="Press / to search">/</span>
+        </div>
+
         <button className="link-button" onClick={onAddAccount} data-testid="add-account">
-          + {S.addAccount}
+          <Plus />
+          <span>{S.addAccount}</span>
         </button>
       </div>
+
       {(offline || authTrouble) && (
         <MessageBar intent={authTrouble ? "error" : "warning"} data-testid="offline-banner">
           <MessageBarBody>
-            <MessageBarTitle>
+            <MessageBarTitle style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {authTrouble ? <CircleAlert /> : <TriangleAlert />}
               {authTrouble ? S.authBanner : S.offlineBanner}
             </MessageBarTitle>
           </MessageBarBody>
@@ -104,7 +116,7 @@ export function SearchResults({
 }) {
   return (
     <div className="pane-list" role="listbox" aria-label={S.search} data-testid="search-results">
-      {results.length === 0 && <div className="empty">{S.noMatches}</div>}
+      {results.length === 0 && <div className="pane-list empty">{S.noMatches}</div>}
       {results.map((r) => (
         <button
           key={r.message_id}

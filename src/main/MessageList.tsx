@@ -1,16 +1,17 @@
 /**
  * Middle pane: virtualized thread list (NFR-1: 60 fps at 10k+ rows).
  * @tanstack/react-virtual drives absolute-positioned rows inside one
- * scroller; Fluent paints them (no v9 virtualized list exists — verified).
+ * scroller; Fluent paints them (no v9 virtualized list exists. verified).
  */
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Text, Badge } from "@fluentui/react-components";
+import { Mail, Star } from "lucide-react";
 import { S } from "../shared/strings";
-import { relativeTime, senderName } from "../shared/format";
+import { relativeTime, senderName, addressHue } from "../shared/format";
 import type { ThreadRow } from "../shared/types";
 
-export const ROW_HEIGHT = 68;
+export const ROW_HEIGHT = 74;
 
 export interface MessageListProps {
   threads: ThreadRow[];
@@ -42,6 +43,9 @@ export function MessageList({
   if (loading && threads.length === 0) {
     return (
       <div className="pane-list empty" role="status">
+        <div className="empty-icon">
+          <Mail />
+        </div>
         <Text>{S.loading}</Text>
       </div>
     );
@@ -49,7 +53,10 @@ export function MessageList({
   if (threads.length === 0) {
     return (
       <div className="pane-list empty" role="status">
-        <Text>{S.noMail}</Text>
+        <div className="empty-icon">
+          <Mail />
+        </div>
+        <Text weight="semibold" size={400}>{S.noMail}</Text>
       </div>
     );
   }
@@ -68,6 +75,10 @@ export function MessageList({
           const t = threads[vi.index];
           const unread = t.unread_count > 0;
           const selected = t.thrid === selectedThrid;
+          const name = senderName(t.from);
+          const initial = (name || "U")[0].toUpperCase();
+          const hue = addressHue(t.from?.email ?? name);
+
           return (
             <div
               key={t.thrid}
@@ -88,23 +99,42 @@ export function MessageList({
               onClick={() => onSelect(t.thrid)}
             >
               <div className="row-main">
-                <span className={`row-sender${unread ? " strong" : ""}`}>
-                  {senderName(t.from)}
+                {unread && <span className="row-unread-dot" title="Unread" />}
+                <span
+                  className="row-avatar"
+                  style={{ background: `hsl(${hue} 65% 42%)` }}
+                >
+                  {initial}
                 </span>
-                {t.starred && <span aria-label="starred">★</span>}
+                <span className={`row-sender${unread ? " strong" : ""}`}>
+                  {name}
+                </span>
+                {t.starred && (
+                  <span className="row-star starred" aria-label="starred">
+                    <Star fill="currentColor" />
+                  </span>
+                )}
                 <span className="row-time">{relativeTime(t.last_date)}</span>
               </div>
+
               <div className={`row-subject${unread ? " strong" : ""}`}>
-                {t.subject}
+                {t.subject || "(no subject)"}
               </div>
+
               <div className="row-bottom">
                 <span className="row-snippet">{t.snippet}</span>
-                {t.msg_count > 1 && (
-                  <Badge appearance="ghost" size="small">
-                    {t.msg_count}
-                  </Badge>
-                )}
-                {unread && <Badge appearance="filled" size="small">{t.unread_count}</Badge>}
+                <div className="row-badges">
+                  {t.msg_count > 1 && (
+                    <Badge appearance="ghost" size="small">
+                      {t.msg_count}
+                    </Badge>
+                  )}
+                  {unread && (
+                    <Badge appearance="filled" size="small">
+                      {t.unread_count}
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
           );

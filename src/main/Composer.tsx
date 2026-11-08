@@ -1,10 +1,11 @@
 /**
  * Composer (FR-17/18): new message or in-thread reply. The draft autosaves
- * (kill-safe restore), and Send queues the driver's SMTP path — a failure
+ * (kill-safe restore), and Send queues the driver's SMTP path. a failure
  * keeps the reason visible and the draft retryable in the outbox.
  */
 import { useEffect, useRef, useState } from "react";
 import { Input, Text, Textarea } from "@fluentui/react-components";
+import { Send, Sparkles, X } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
 import type { Addr } from "../shared/types";
@@ -39,11 +40,6 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
   const bodyRef = useRef(body);
   bodyRef.current = body;
 
-  // FR-17 kill-safe drafts: every edit autosaves (debounced). The first
-  // edit creates the draft row; later edits update it. A killed app
-  // therefore loses at most the last debounce window of typing. Empty
-  // drafts are never persisted (a blank compose left open must not spawn
-  // rows), and an in-flight save is never raced by a second one.
   const savingRef = useRef(false);
   useEffect(() => {
     if (!to.trim() && !subject.trim() && !body.trim()) return;
@@ -57,10 +53,8 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
         });
     }, 800);
     return () => window.clearTimeout(t);
-    // saveNow is a ref-stable closure over the current fields.
   });
 
-  // FR-22: the AI draft streams into the editable body.
   useEffect(() => {
     if (!target.threadId || target.initialBody !== undefined) return;
     let live = true;
@@ -76,8 +70,7 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
     return () => {
       live = false;
     };
-
-  }, []);
+  }, [target.threadId, target.initialBody, target.instruction, target.subject]);
 
   const parseAddrs = (raw: string): Addr[] =>
     raw
@@ -125,10 +118,35 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
     }
   };
 
+  const applyTone = (tone: string) => {
+    if (target.threadId) {
+      setBody("");
+      ipc
+        .aiStream(
+          "ai_draft_reply",
+          { threadId: target.threadId, instruction: `Make the reply ${tone.toLowerCase()}` },
+          (t) => setBody((b) => b + t),
+          (n) => setError(n),
+          () => {},
+        )
+        .catch(() => {});
+    }
+  };
+
   return (
-    // biome-ignore lint/a11y: composite editor surface
     <div className="composer" data-testid="composer" onKeyDown={onKeyDown}>
-      <div className="composer-head">{target.inReplyTo ? S.replyTitle : S.composeTitle}</div>
+      <div className="composer-head">
+        <span>{target.inReplyTo ? S.replyTitle : S.composeTitle}</span>
+        <button
+          className="link-button"
+          onClick={onClose}
+          aria-label="Close composer"
+          style={{ padding: 4 }}
+        >
+          <X />
+        </button>
+      </div>
+
       <label className="field">
         <span>{S.to}</span>
         <Input
@@ -138,10 +156,12 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
           autoFocus
         />
       </label>
+
       <label className="field">
         <span>{S.cc}</span>
         <Input value={cc} onChange={(_, d) => setCc(d.value)} />
       </label>
+
       <label className="field">
         <span>{S.subject}</span>
         <Input
@@ -150,25 +170,50 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
           data-testid="composer-subject"
         />
       </label>
+
+      {target.threadId && (
+        <div className="composer-ai-chips">
+          <span style={{ fontSize: 11, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <Sparkles /> AI Tone:
+          </span>
+          {["Professional", "Shorter", "Friendly"].map((tone) => (
+            <button
+              key={tone}
+              type="button"
+              className="quick-chip"
+              onClick={() => applyTone(tone)}
+            >
+              {tone}
+            </button>
+          ))}
+        </div>
+      )}
+
       <Textarea
         value={body}
         onChange={(_, d) => setBody(d.value)}
         rows={12}
         data-testid="composer-body"
         aria-label={S.composeTitle}
+        className="composer-textarea"
       />
+
       <div className="composer-actions">
-        <button
-          className="primary-button"
-          data-testid="composer-send"
-          disabled={status === "sending" || !to.trim()}
-          onClick={() => void send()}
-        >
-          {status === "sending" ? S.sending : S.send}
-        </button>
-        <button className="link-button" onClick={onClose}>
-          {S.cancel}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            className="primary-button"
+            data-testid="composer-send"
+            disabled={status === "sending" || !to.trim()}
+            onClick={() => void send()}
+          >
+            <Send />
+            <span>{status === "sending" ? S.sending : S.send}</span>
+          </button>
+          <button className="link-button" onClick={onClose}>
+            {S.cancel}
+          </button>
+        </div>
+
         {error && (
           <Text size={200} className="error-hint" data-testid="composer-error">
             {S.sendFailed}: {error}

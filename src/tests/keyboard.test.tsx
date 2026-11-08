@@ -1,4 +1,4 @@
-/** L1: keyboard model (FR-30) — the keymap contract, headless. */
+/** L1: keyboard model (FR-30). the keymap contract, headless. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import React from "react";
