@@ -58,10 +58,9 @@ export function MainApp() {
       })
       .catch(() => {});
     // Only on the initial load.
-
   }, [mail.loading]);
 
-  useEffect(() => {
+  const refreshSettings = useCallback(() => {
     ipc
       .getSettings()
       .then((s) => {
@@ -70,6 +69,10 @@ export function MainApp() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    refreshSettings();
+  }, [refreshSettings, mail.scope, onboarding]);
 
   // Selection cursor for j/k: index into the current thread list.
   const cursor = useRef(0);
@@ -128,17 +131,57 @@ export function MainApp() {
     [mail.messages],
   );
 
-  const newestOf = (thrid: string | null): ThreadRow | null => {
-    if (!thrid) return null;
-    return mail.threads.find((t) => t.thrid === thrid) ?? null;
-  };
-
-  const openComposer = useCallback(
-    (target: ComposerTarget) => {
-      setComposer(target);
+  const newestOf = useCallback(
+    (thrid: string | null): ThreadRow | null => {
+      if (!thrid) return null;
+      return mail.threads.find((t) => t.thrid === thrid) ?? null;
     },
-    [],
+    [mail.threads],
   );
+
+  const openComposer = useCallback((target: ComposerTarget) => {
+    setComposer(target);
+  }, []);
+
+  const archiveThreadById = useCallback(
+    (thrid: string) => {
+      ipc
+        .threadMessages(thrid)
+        .then((ms) => {
+          const target = ms[ms.length - 1];
+          if (target) return ipc.archiveMessage(target.id);
+          return undefined;
+        })
+        .then(() => mail.refresh())
+        .catch(() => {});
+    },
+    [mail],
+  );
+
+  const toggleStarThreadById = useCallback(
+    (thrid: string, nextStarred?: boolean) => {
+      ipc
+        .threadMessages(thrid)
+        .then((ms) => {
+          const target = ms[ms.length - 1];
+          if (target) {
+            const desired = nextStarred !== undefined ? nextStarred : !target.starred;
+            return ipc.setStarred(target.id, desired);
+          }
+          return undefined;
+        })
+        .then(() => mail.refresh())
+        .catch(() => {});
+    },
+    [mail],
+  );
+
+  const handleSyncNow = useCallback(() => {
+    void ipc
+      .syncNow()
+      .then(() => mail.refresh())
+      .catch(() => {});
+  }, [mail]);
 
   const actions = useMemo(
     () => ({
@@ -149,15 +192,7 @@ export function MainApp() {
         // thread (the one being triaged); older thread messages stay.
         const t = newestOf(mail.selectedThrid);
         if (t) {
-          ipc
-            .threadMessages(t.thrid)
-            .then((ms) => {
-              const target = ms[ms.length - 1];
-              if (target) return ipc.archiveMessage(target.id);
-              return undefined;
-            })
-            .then(() => mail.refresh())
-            .catch(() => {});
+          archiveThreadById(t.thrid);
         }
       },
       toggleUnread: () => {
@@ -172,15 +207,7 @@ export function MainApp() {
       toggleStar: () => {
         const t = newestOf(mail.selectedThrid);
         if (!t) return;
-        ipc
-          .threadMessages(t.thrid)
-          .then((ms) => {
-            const target = ms[ms.length - 1];
-            if (target) return ipc.setStarred(target.id, !target.starred);
-            return undefined;
-          })
-          .then(() => mail.refresh())
-          .catch(() => {});
+        toggleStarThreadById(t.thrid);
       },
       compose: () => {
         const first = mail.accounts[0];
@@ -190,6 +217,8 @@ export function MainApp() {
             to: [],
             subject: "",
           });
+        } else {
+          setAdding(true);
         }
       },
       reply: () => {
@@ -219,7 +248,19 @@ export function MainApp() {
         if (search) setSearch(null);
       },
     }),
-    [mail.accounts, mail.selectedThrid, mail.threads, mail.messages, mail, selectAt, markThreadRead, search, openComposer],
+    [
+      mail.accounts,
+      mail.selectedThrid,
+      mail.messages,
+      mail,
+      selectAt,
+      markThreadRead,
+      search,
+      openComposer,
+      newestOf,
+      archiveThreadById,
+      toggleStarThreadById,
+    ],
   );
   const modalOpen = overlay || palette || adding || composer !== null;
   useKeyboard(actions, !modalOpen, keymap);
@@ -239,28 +280,26 @@ export function MainApp() {
       { id: "followups", label: S.followups, run: () => mail.setScope({ kind: "followups" }) },
       { id: "cleanup", label: S.cleanup, run: () => mail.setScope({ kind: "cleanup" }) },
       { id: "settings", label: S.settings, run: () => mail.setScope({ kind: "settings" }) },
-      { id: "sync", label: S.cmdSync, run: () => void ipc.syncNow().catch(() => {}) },
+      { id: "sync", label: S.cmdSync, run: handleSyncNow },
       { id: "add", label: S.addAccount, run: () => setAdding(true) },
       {
         id: "compose",
         label: S.compose,
-        run: () => {
-          const first = mail.accounts[0];
-          if (first)
-            openComposer({
-              accountId: first.id,
-              to: [],
-              subject: "",
-            });
-        },
+        run: actions.compose,
       },
     ],
-    [mail, openComposer],
+    [mail, handleSyncNow, actions.compose],
   );
 
-  const onMarkRead = useCallback((m: { id: number; unread: boolean }) => {
-    ipc.markRead(m.id, !m.unread).catch(() => {});
-  }, []);
+  const onMarkRead = useCallback(
+    (m: { id: number; unread: boolean }) => {
+      ipc
+        .markRead(m.id, m.unread)
+        .then(() => mail.refresh())
+        .catch(() => {});
+    },
+    [mail],
+  );
 
   const openFollowUp = useCallback(
     (row: { account_id: number; to: { email: string } | null; subject: string; thrid: string }) => {
@@ -285,19 +324,24 @@ export function MainApp() {
         subject: t && !t.subject.startsWith("Re:") ? `Re: ${t.subject}` : (t?.subject ?? ""),
         threadId,
         initialBody: "",
+        instruction,
       });
-      // The instruction steers the AI draft (FR-22); pass it through the
-      // composer's streaming effect via the subject field is wrong. the
-      // composer streams with its own instruction, so stash it on the DOM
-      // node for the composer to read on mount.
-      window.setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent("cracktivity:ai-instruction", { detail: instruction }),
-        );
-      }, 0);
     },
-    [mail.messages],
+    [mail.messages, newestOf, openComposer],
   );
+
+  const activeAccount =
+    mail.scope.kind === "account"
+      ? mail.accounts.find((a) => a.id === (mail.scope as { id: number }).id)
+      : undefined;
+  const toolbarTitle =
+    mail.scope.kind === "account"
+      ? (activeAccount?.display_name ?? activeAccount?.email ?? "Account")
+      : "Inbox";
+  const scopeUnread =
+    mail.scope.kind === "account"
+      ? (activeAccount?.unread ?? 0)
+      : mail.accounts.reduce((sum, a) => sum + a.unread, 0);
 
   return (
     <div className="app-shell" data-testid="main-app">
@@ -307,6 +351,9 @@ export function MainApp() {
         scope={mail.scope}
         onScope={mail.setScope}
         onCompose={actions.compose}
+        onAddAccount={() => setAdding(true)}
+        onOpenPalette={() => setPalette(true)}
+        onOpenShortcuts={() => setOverlay(true)}
       />
       <div className="pane-middle">
         {mail.scope.kind !== "settings" && (
@@ -317,6 +364,10 @@ export function MainApp() {
             onAddAccount={() => setAdding(true)}
             statuses={mail.statuses}
             alsoServer={alsoServer}
+            title={toolbarTitle}
+            threadCount={mail.threads.length}
+            unreadCount={scopeUnread}
+            onSyncNow={handleSyncNow}
           />
         )}
         {mail.scope.kind === "followups" ? (
@@ -343,6 +394,15 @@ export function MainApp() {
               mail.select(thrid);
             }}
             loading={mail.loading}
+            hasAccounts={mail.accounts.length > 0}
+            onAddAccount={() => setAdding(true)}
+            onSyncNow={handleSyncNow}
+            onShowAll={
+              mail.filter !== "all" ? () => mail.setFilter("all") : undefined
+            }
+            onOpenShortcuts={() => setOverlay(true)}
+            onArchiveThread={archiveThreadById}
+            onToggleStarThread={toggleStarThreadById}
           />
         )}
       </div>
@@ -352,6 +412,14 @@ export function MainApp() {
         aiEnabled={aiEnabled}
         threadId={mail.selectedThrid}
         onDraftReply={openAiReply}
+        onReply={actions.reply}
+        onArchiveThread={actions.archive}
+        onToggleStarThread={actions.toggleStar}
+        onRefresh={() => mail.refresh()}
+        onCompose={actions.compose}
+        onFocusSearch={actions.focusSearch}
+        onOpenPalette={() => setPalette(true)}
+        onOpenShortcuts={() => setOverlay(true)}
       />
       <ShortcutsOverlay open={overlay} onClose={() => setOverlay(false)} scheme={keymap} />
       <CommandPalette
@@ -362,7 +430,10 @@ export function MainApp() {
       <AddAccountDialog
         open={adding}
         onClose={() => setAdding(false)}
-        onAdded={() => void ipc.syncNow().catch(() => {})}
+        onAdded={() => {
+          void ipc.syncNow().catch(() => {});
+          mail.refresh();
+        }}
       />
       {composer && (
         <div className="overlay">
@@ -381,12 +452,3 @@ export function MainApp() {
     </div>
   );
 }
-
-/** AI master switch read once per mount (the Settings view reloads it). */
-const aiEnabledRef = { current: false };
-void ipc
-  .getSettings()
-  .then((s) => {
-    aiEnabledRef.current = s["ai.enabled"] === true;
-  })
-  .catch(() => {});

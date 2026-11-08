@@ -9,8 +9,9 @@ import {
   DialogTitle,
   Input,
 } from "@fluentui/react-components";
-import { Search } from "lucide-react";
+import { Command, CornerDownLeft, Keyboard, Search } from "lucide-react";
 import { S } from "../shared/strings";
+import { Kbd } from "../shared/ui";
 import { KEYMAP_SCHEMES, shortcutRows, type KeymapScheme } from "./keymap";
 
 export function ShortcutsOverlay({
@@ -33,27 +34,37 @@ export function ShortcutsOverlay({
     KEYMAP_SCHEMES.find((k) => k.id === scheme)?.label ?? scheme;
   return (
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
-      <DialogSurface>
+      <DialogSurface className="shortcuts-surface">
         <DialogBody>
           <DialogTitle>
-            {S.shortcutsTitle}. {schemeLabel}
+            <span className="dialog-title-row">
+              <span className="dialog-title-icon">
+                <Keyboard size={15} />
+              </span>
+              <span>
+                {S.shortcutsTitle} · {schemeLabel}
+              </span>
+            </span>
           </DialogTitle>
           <DialogContent>
-            <table className="shortcut-table" data-testid="shortcuts-overlay" style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 6px" }}>
+            <table
+              className="shortcut-table"
+              data-testid="shortcuts-overlay"
+            >
               <tbody>
                 {rows.map(([k, v]) => (
                   <tr key={k}>
                     <td className="key">
-                      <kbd>{k}</kbd>
+                      <Kbd>{k}</Kbd>
                     </td>
-                    <td style={{ color: "var(--fg-secondary)", fontSize: 13 }}>{v}</td>
+                    <td className="shortcut-desc">{v}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </DialogContent>
           <DialogActions>
-            <button className="link-button" onClick={onClose}>
+            <button type="button" className="link-button" onClick={onClose}>
               {S.cancel}
             </button>
           </DialogActions>
@@ -107,12 +118,19 @@ export function CommandPalette({
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface className="palette-surface">
         <DialogBody>
-          <DialogTitle>{S.commands}</DialogTitle>
+          <DialogTitle>
+            <span className="dialog-title-row">
+              <span className="dialog-title-icon">
+                <Command size={15} />
+              </span>
+              <span>{S.commands}</span>
+            </span>
+          </DialogTitle>
           <DialogContent>
-            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <div className="palette-input-wrap">
               <Input
                 autoFocus
-                contentBefore={<Search />}
+                contentBefore={<Search size={14} />}
                 placeholder={S.palettePlaceholder}
                 value={q}
                 onChange={(_, d) => {
@@ -127,13 +145,16 @@ export function CommandPalette({
             <div
               className="palette-list"
               role="listbox"
-              aria-activedescendant={filtered[hi] ? `palette-opt-${filtered[hi].id}` : undefined}
+              aria-activedescendant={
+                filtered[hi] ? `palette-opt-${filtered[hi].id}` : undefined
+              }
             >
               {filtered.map((c, i) => (
                 <button
+                  type="button"
                   key={c.id}
                   id={`palette-opt-${c.id}`}
-                  className={`nav-item${i === hi ? " active" : ""}`}
+                  className={`nav-item palette-item${i === hi ? " active" : ""}`}
                   role="option"
                   aria-selected={i === hi}
                   onMouseEnter={() => setHi(i)}
@@ -144,6 +165,11 @@ export function CommandPalette({
                   data-testid={`palette-${c.id}`}
                 >
                   <span className="nav-label">{c.label}</span>
+                  {i === hi && (
+                    <span className="palette-item-enter" aria-hidden="true">
+                      <CornerDownLeft size={12} />
+                    </span>
+                  )}
                 </button>
               ))}
             </div>

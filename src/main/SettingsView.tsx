@@ -7,9 +7,17 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Switch, Text } from "@fluentui/react-components";
-import { Bot, Eye, History, KeyRound, Settings } from "lucide-react";
+import {
+  Bot,
+  Eye,
+  History,
+  KeyRound,
+  Settings,
+  ShieldCheck,
+} from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
+import { BadgePill } from "../shared/ui";
 import { useThemeChoice, type ThemeChoice } from "../shared/theme";
 import {
   KEYMAP_SCHEMES,
@@ -95,13 +103,27 @@ export function SettingsView() {
   };
 
   const bool = (key: string) => settings[key] === true;
-  const str = (key: string) => (typeof settings[key] === "string" ? (settings[key] as string) : "");
+  const str = (key: string) =>
+    typeof settings[key] === "string" ? (settings[key] as string) : "";
 
   return (
     <div className="pane-list settings" data-testid="settings-view">
+      <header className="settings-page-header">
+        <div>
+          <h2 className="settings-page-title">{S.settings}</h2>
+          <p className="settings-page-subtitle">
+            Manage on-device AI models, MCP agent permissions, appearance, and
+            network/storage diagnostics.
+          </p>
+        </div>
+        <BadgePill variant="success" size="sm" icon={<ShieldCheck size={12} />}>
+          Zero Telemetry Active
+        </BadgePill>
+      </header>
+
       <section aria-label={S.settingsAi}>
         <h3>
-          <Bot />
+          <Bot size={16} />
           <span>{S.settingsAi}</span>
         </h3>
         {ai && (
@@ -122,7 +144,12 @@ export function SettingsView() {
                 id="ai-tier"
                 value={ai.tier_is_override ? ai.tier : "auto"}
                 data-testid="ai-tier"
-                onChange={(e) => set("ai.tier_override", e.target.value === "auto" ? null : e.target.value)}
+                onChange={(e) =>
+                  set(
+                    "ai.tier_override",
+                    e.target.value === "auto" ? null : e.target.value,
+                  )
+                }
               >
                 <option value="auto">{S.aiTierAuto}</option>
                 {TIERS.map((t) => (
@@ -154,6 +181,7 @@ export function SettingsView() {
                 </span>
                 {ai.chatgpt_email ? (
                   <button
+                    type="button"
                     className="link-button"
                     disabled={chatgptBusy}
                     onClick={() => {
@@ -170,6 +198,7 @@ export function SettingsView() {
                   </button>
                 ) : (
                   <button
+                    type="button"
                     className="primary-button"
                     disabled={chatgptBusy}
                     onClick={() => {
@@ -188,7 +217,11 @@ export function SettingsView() {
               </div>
             )}
             {chatgptError && (
-              <div className="error-text" role="alert" data-testid="ai-chatgpt-error">
+              <div
+                className="error-text"
+                role="alert"
+                data-testid="ai-chatgpt-error"
+              >
                 {chatgptError}
               </div>
             )}
@@ -197,11 +230,17 @@ export function SettingsView() {
                 {ai.model_downloaded ? S.aiModelReady : S.aiModelDownload}
               </span>
               {!ai.model_downloaded ? (
-                <button className="primary-button" onClick={download} data-testid="ai-download">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={download}
+                  data-testid="ai-download"
+                >
                   {downloadNote ?? S.aiModelDownload}
                 </button>
               ) : (
                 <button
+                  type="button"
                   className="link-button"
                   onClick={() => ipc.aiDeleteModel().then(reload).catch(() => {})}
                 >
@@ -213,40 +252,45 @@ export function SettingsView() {
             <Text size={200} className="hint">
               {S.aiCostNote}
             </Text>
-            {ENGINES.filter((e) => e !== "local").map((e) => (
-              <div key={e} className="field-row">
-                <span>{e}</span>
-                {ai.byo_configured[e as keyof typeof ai.byo_configured] ? (
-                  <Text size={200}>{S.aiKeySet}</Text>
-                ) : null}
-                <Input2
-                  value={keys[e] ?? ""}
-                  placeholder={S.aiKeyPlaceholder}
-                  onChange={(v) => setKeys((k) => ({ ...k, [e]: v }))}
-                />
-                <button
-                  className="link-button"
-                  onClick={() =>
-                    ipc
-                      .aiSetKey(e, keys[e] || null)
-                      .then(() => {
-                        setKeys((k) => ({ ...k, [e]: "" }));
-                        reload();
-                      })
-                      .catch(() => {})
-                  }
-                >
-                  {S.aiSaveKey}
-                </button>
-              </div>
-            ))}
+            {ENGINES
+              .filter((e) => e !== "local")
+              .map((e) => (
+                <div key={e} className="field-row">
+                  <span className="settings-provider-label">{e}</span>
+                  {ai.byo_configured[e as keyof typeof ai.byo_configured] ? (
+                    <BadgePill variant="success" size="xs">
+                      {S.aiKeySet}
+                    </BadgePill>
+                  ) : null}
+                  <Input2
+                    value={keys[e] ?? ""}
+                    placeholder={S.aiKeyPlaceholder}
+                    onChange={(v) => setKeys((k) => ({ ...k, [e]: v }))}
+                  />
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() =>
+                      ipc
+                        .aiSetKey(e, keys[e] || null)
+                        .then(() => {
+                          setKeys((k) => ({ ...k, [e]: "" }));
+                          reload();
+                        })
+                        .catch(() => {})
+                    }
+                  >
+                    {S.aiSaveKey}
+                  </button>
+                </div>
+              ))}
           </>
         )}
       </section>
 
       <section aria-label={S.settingsMcp}>
         <h3>
-          <KeyRound />
+          <KeyRound size={16} />
           <span>{S.settingsMcp}</span>
         </h3>
         <Switch
@@ -258,6 +302,7 @@ export function SettingsView() {
         <div className="field-row">
           {MCP_CLIENTS.map((c) => (
             <button
+              type="button"
               key={c}
               className="link-button"
               data-testid={`mcp-register-${c}`}
@@ -292,7 +337,7 @@ export function SettingsView() {
 
       <section aria-label={S.settingsGeneral}>
         <h3>
-          <Settings />
+          <Settings size={16} />
           <span>{S.settingsGeneral}</span>
         </h3>
         <Switch
@@ -307,7 +352,12 @@ export function SettingsView() {
             id="followup-days"
             value={str("followup.days") || "3"}
             data-testid="followup-days"
-            onChange={(e) => ipc.setFollowupDays(Number(e.target.value)).then(reload).catch(() => {})}
+            onChange={(e) =>
+              ipc
+                .setFollowupDays(Number(e.target.value))
+                .then(reload)
+                .catch(() => {})
+            }
           >
             {[1, 2, 3, 5, 7].map((d) => (
               <option key={d} value={d}>
@@ -320,7 +370,7 @@ export function SettingsView() {
 
       <section aria-label={S.settingsAppearance}>
         <h3>
-          <Eye />
+          <Eye size={16} />
           <span>{S.settingsAppearance}</span>
         </h3>
         <div className="field-row">
@@ -364,7 +414,12 @@ export function SettingsView() {
             placeholder={str("panel.hotkey") || S.hotkeyDefault}
             onChange={(e) => setHotkey(e.target.value)}
           />
-          <button className="link-button" onClick={saveHotkey} data-testid="hotkey-save">
+          <button
+            type="button"
+            className="link-button"
+            onClick={saveHotkey}
+            data-testid="hotkey-save"
+          >
             {S.hotkeySave}
           </button>
         </div>
@@ -380,14 +435,16 @@ export function SettingsView() {
 
       <section aria-label={S.diagnostics}>
         <h3>
-          <History />
+          <History size={16} />
           <span>{S.diagnostics}</span>
         </h3>
         <div className="field-row" data-testid="diagnostics-hosts">
           <span>{S.diagnosticsHosts}:</span>
           {hosts && hosts.length > 0 ? (
             hosts.map((h) => (
-              <span key={h} className="audit-detail">{h}</span>
+              <span key={h} className="audit-detail">
+                {h}
+              </span>
             ))
           ) : (
             <Text size={200}>{S.noHosts}</Text>
@@ -397,36 +454,52 @@ export function SettingsView() {
           <span>{S.settingsStorage}:</span>
           {storage && (
             <>
-              <span>{S.storageDb}: {Math.round(storage.db_bytes / 1e6)} MB</span>
-              <span>{S.storageModels}: {Math.round(storage.models_bytes / 1e6)} MB</span>
+              <span>
+                {S.storageDb}: {Math.round(storage.db_bytes / 1e6)} MB
+              </span>
+              <span>
+                {S.storageModels}: {Math.round(storage.models_bytes / 1e6)} MB
+              </span>
             </>
           )}
         </div>
         <div className="field-row">
           <button
+            type="button"
             className="link-button"
             data-testid="prune-cache"
             onClick={() =>
               ipc
                 .pruneCache()
-                .then((n) => setPruneNote(n > 0 ? S.prunedBytes(n) : S.pruneNothing))
+                .then((n) =>
+                  setPruneNote(n > 0 ? S.prunedBytes(n) : S.pruneNothing),
+                )
                 .catch(() => setPruneNote(S.pruneFailed))
             }
           >
             {S.pruneCache}
           </button>
           {pruneNote && (
-            <Text size={200} data-testid="prune-result">{pruneNote}</Text>
+            <Text size={200} data-testid="prune-result">
+              {pruneNote}
+            </Text>
           )}
         </div>
         <h4>{S.logsTitle}</h4>
-        <div className="audit" role="log" aria-label={S.logsTitle} data-testid="diag-logs">
+        <div
+          className="audit"
+          role="log"
+          aria-label={S.logsTitle}
+          data-testid="diag-logs"
+        >
           {logs.length === 0 ? (
             <div className="audit-row">{S.logsEmpty}</div>
           ) : (
             logs.map((l, i) => (
               <div key={i} className="audit-row">
-                <span className="audit-time">{new Date(l.ts).toLocaleTimeString()}</span>
+                <span className="audit-time">
+                  {new Date(l.ts).toLocaleTimeString()}
+                </span>
                 <span className="audit-actor">{l.level}</span>
                 <span className="audit-detail">{l.msg}</span>
               </div>
@@ -435,13 +508,17 @@ export function SettingsView() {
         </div>
         <div className="field-row">
           <button
+            type="button"
             className="link-button"
             data-testid="logs-clear"
             onClick={() => {
-              ipc.clearDiagnosticsLogs().then(() => {
-                setLogsCleared(true);
-                reloadLogs();
-              }).catch(() => {});
+              ipc
+                .clearDiagnosticsLogs()
+                .then(() => {
+                  setLogsCleared(true);
+                  reloadLogs();
+                })
+                .catch(() => {});
             }}
           >
             {S.clearLogs}
