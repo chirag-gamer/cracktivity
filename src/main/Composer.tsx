@@ -23,6 +23,8 @@ export interface ComposerTarget {
   initialBody?: string;
   /** FR-22: steering instruction for the AI draft. */
   instruction?: string;
+  /** True when popped out after initial AI draft completed or manual edits exist. */
+  skipAutoStream?: boolean;
 }
 
 export interface ComposerProps {
@@ -45,6 +47,10 @@ export function Composer({
   const [subject, setSubject] = useState(target.subject);
   const [body, setBody] = useState(target.initialBody ?? "");
   const [status, setStatus] = useState<"editing" | "sending" | "failed">("editing");
+  const [aiStreaming, setAiStreaming] = useState(false);
+  const [activeInstruction, setActiveInstruction] = useState<string | undefined>(
+    target.instruction,
+  );
   const [error, setError] = useState<string | null>(null);
   const draftId = useRef<number | null>(null);
   const bodyRef = useRef(body);
@@ -67,8 +73,10 @@ export function Composer({
 
   useEffect(() => {
     if (!target.threadId) return;
+    if (target.skipAutoStream) return;
     if (target.initialBody && !target.instruction) return;
     let live = true;
+    setAiStreaming(true);
     ipc
       .aiStream(
         "ai_draft_reply",
@@ -78,13 +86,24 @@ export function Composer({
         },
         (t) => live && setBody((b) => b + t),
         (n) => live && setError(n),
-        () => {},
+        () => {
+          if (live) setAiStreaming(false);
+        },
       )
-      .catch(() => {});
+      .catch(() => {
+        if (live) setAiStreaming(false);
+      });
     return () => {
       live = false;
+      setAiStreaming(false);
     };
-  }, [target.threadId, target.initialBody, target.instruction, target.subject]);
+  }, [
+    target.threadId,
+    target.initialBody,
+    target.instruction,
+    target.subject,
+    target.skipAutoStream,
+  ]);
 
   const parseAddrs = (raw: string): Addr[] =>
     raw
@@ -134,23 +153,28 @@ export function Composer({
 
   const applyTone = (tone: string) => {
     if (target.threadId) {
+      const nextInstruction = `Make the reply ${tone.toLowerCase()}`;
+      setActiveInstruction(nextInstruction);
       setBody("");
+      setAiStreaming(true);
       ipc
         .aiStream(
           "ai_draft_reply",
           {
             threadId: target.threadId,
-            instruction: `Make the reply ${tone.toLowerCase()}`,
+            instruction: nextInstruction,
           },
           (t) => setBody((b) => b + t),
           (n) => setError(n),
-          () => {},
+          () => setAiStreaming(false),
         )
-        .catch(() => {});
+        .catch(() => setAiStreaming(false));
     }
   };
 
   const handlePopOut = async () => {
+    if (aiStreaming) return;
+    const hasBody = bodyRef.current.length > 0;
     const payload: ComposerTarget = {
       accountId: target.accountId,
       to: parseAddrs(to),
@@ -159,6 +183,8 @@ export function Composer({
       inReplyTo: target.inReplyTo ?? null,
       threadId: target.threadId ?? null,
       initialBody: bodyRef.current,
+      instruction: activeInstruction,
+      skipAutoStream: hasBody,
     };
     try {
       await ipc.openComposerWindow(JSON.stringify(payload));
@@ -187,6 +213,7 @@ export function Composer({
             <IconButton
               label="Pop out into separate window"
               size="xs"
+              disabled={aiStreaming || status === "sending"}
               data-testid="composer-popout"
               onClick={() => void handlePopOut()}
             >

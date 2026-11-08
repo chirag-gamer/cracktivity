@@ -453,14 +453,102 @@ export function SettingsView() {
     setSettings((s) => ({ ...s, [key]: value }));
   };
 
+  const bool = (key: string) => settings[key] === true;
+  const str = (key: string) =>
+    typeof settings[key] === "string" ? (settings[key] as string) : "";
+
+  const sanitizeEndpointUrl = (raw?: string): string | undefined => {
+    if (!raw) return undefined;
+    try {
+      const parsed = new URL(raw.trim());
+      parsed.username = "";
+      parsed.password = "";
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return "<redacted-url>";
+    }
+  };
+
   const providers = useMemo(
     () => mergeProvidersConfig(settings["ai.providers_config"], ai?.byo_configured),
     [settings, ai?.byo_configured],
   );
 
-  const saveProviders = (next: AiProviderDefinition[]) => {
+  const reconcileAiRoutes = (
+    nextProviders: AiProviderDefinition[],
+    modelChange?: { providerId: string; oldModelId: string; newModelId?: string },
+  ) => {
+    const currentEngine = str("ai.engine") || ai?.engine || "local";
+    const currentModel = str("ai.byo_model");
+
+    if (currentEngine !== "local" && currentEngine !== "chatgpt") {
+      const prov = nextProviders.find((p) => p.id === currentEngine && p.enabled);
+      if (!prov || prov.models.length === 0) {
+        set("ai.engine", "local");
+        set("ai.byo_model", "");
+        setAi((prev) => (prev ? { ...prev, engine: "local" } : prev));
+      } else if (
+        modelChange &&
+        modelChange.providerId === currentEngine &&
+        (currentModel === modelChange.oldModelId || !currentModel)
+      ) {
+        const nextM =
+          modelChange.newModelId || prov.defaultModel || prov.models[0]?.id || "";
+        set("ai.byo_model", nextM);
+      } else if (currentModel && !prov.models.some((m) => m.id === currentModel)) {
+        set("ai.byo_model", prov.defaultModel || prov.models[0]?.id || "");
+      }
+    }
+
+    const writingEng = str("ai.writing_engine") || "same";
+    const writingMod = str("ai.writing_model");
+    if (writingEng !== "same" && writingEng !== "local" && writingEng !== "chatgpt") {
+      const wProv = nextProviders.find((p) => p.id === writingEng && p.enabled);
+      if (!wProv || wProv.models.length === 0) {
+        set("ai.writing_engine", "same");
+        set("ai.writing_model", "");
+      } else if (
+        modelChange &&
+        modelChange.providerId === writingEng &&
+        (writingMod === modelChange.oldModelId || !writingMod)
+      ) {
+        const nextM =
+          modelChange.newModelId || wProv.defaultModel || wProv.models[0]?.id || "";
+        if (nextM) {
+          set("ai.writing_model", nextM);
+        } else {
+          set("ai.writing_engine", "same");
+          set("ai.writing_model", "");
+        }
+      } else if (writingMod && !wProv.models.some((m) => m.id === writingMod)) {
+        const nextM = wProv.defaultModel || wProv.models[0]?.id || "";
+        if (nextM) {
+          set("ai.writing_model", nextM);
+        } else {
+          set("ai.writing_engine", "same");
+          set("ai.writing_model", "");
+        }
+      }
+    }
+
+    const fbEng = str("ai.fallback_engine") || "local";
+    if (fbEng !== "local" && fbEng !== "none" && fbEng !== "chatgpt") {
+      const fbProv = nextProviders.find((p) => p.id === fbEng && p.enabled);
+      if (!fbProv || fbProv.models.length === 0) {
+        set("ai.fallback_engine", "local");
+      }
+    }
+  };
+
+  const saveProviders = (
+    next: AiProviderDefinition[],
+    modelChange?: { providerId: string; oldModelId: string; newModelId?: string },
+  ) => {
     const serialized = serializeProvidersConfig(next);
     set("ai.providers_config", serialized);
+    reconcileAiRoutes(next, modelChange);
   };
 
   const activeProvider = useMemo(
@@ -471,9 +559,10 @@ export function SettingsView() {
   const updateProvider = (
     id: string,
     updater: (prev: AiProviderDefinition) => AiProviderDefinition,
+    modelChange?: { providerId: string; oldModelId: string; newModelId?: string },
   ) => {
     const next = providers.map((p) => (p.id === id ? updater(p) : p));
-    saveProviders(next);
+    saveProviders(next, modelChange);
   };
 
   const download = () => {
@@ -508,10 +597,6 @@ export function SettingsView() {
       })
       .catch((e) => setHotkeyNote(String(e)));
   };
-
-  const bool = (key: string) => settings[key] === true;
-  const str = (key: string) =>
-    typeof settings[key] === "string" ? (settings[key] as string) : "";
 
   const handleSaveProviderKey = async (providerId: string) => {
     const draftKey = (keys[providerId] ?? "").trim();
@@ -571,7 +656,7 @@ export function SettingsView() {
       setAiDiagnosticError({
         provider: p.name,
         message: msg,
-        endpoint: p.baseUrl,
+        endpoint: sanitizeEndpointUrl(p.baseUrl),
       });
       reloadLogs();
     } finally {
@@ -623,11 +708,16 @@ export function SettingsView() {
       try {
         await ipc.aiSetKey(slug, trimmedKey);
       } catch (e) {
-        setAiDiagnosticError({ provider: trimmedName, message: String(e), endpoint: trimmedUrl });
+        setAiDiagnosticError({
+          provider: trimmedName,
+          message: String(e),
+          endpoint: sanitizeEndpointUrl(trimmedUrl),
+        });
       }
     }
     set("ai.engine", slug);
     set("ai.byo_model", firstModel);
+    setAi((prev) => (prev ? { ...prev, engine: slug } : prev));
     setAddProviderOpen(false);
     setCustomName("");
     setCustomBaseUrl("");
@@ -635,7 +725,6 @@ export function SettingsView() {
     setCustomInitialModel("");
     setCustomError(null);
     setActiveProviderId(slug);
-    reload();
   };
 
   // Options for Engine, Default Model, Writing Model, and Fallback Engine
@@ -681,7 +770,7 @@ export function SettingsView() {
   }, [providers, ai?.chatgpt_email]);
 
   const currentDefaultComposite = useMemo(() => {
-    const eng = ai?.engine || str("ai.engine") || "local";
+    const eng = str("ai.engine") || ai?.engine || "local";
     if (eng === "local") return "local::local";
     const mod =
       str("ai.byo_model") ||
@@ -1265,6 +1354,7 @@ export function SettingsView() {
                     <IconButton
                       label="Close provider settings"
                       size="xs"
+                      data-testid="provider-modal-close"
                       onClick={() => setActiveProviderId(null)}
                     >
                       <X size={15} />
@@ -1529,17 +1619,29 @@ export function SettingsView() {
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter" && editingModelDraft.trim()) {
                                     const nextId = editingModelDraft.trim();
-                                    updateProvider(activeProvider.id, (prev) => ({
-                                      ...prev,
-                                      models: prev.models.map((item) =>
-                                        item.id === m.id
-                                          ? {
-                                              id: nextId,
-                                              capabilities: inferModelCapabilities(nextId),
-                                            }
-                                          : item,
-                                      ),
-                                    }));
+                                    updateProvider(
+                                      activeProvider.id,
+                                      (prev) => ({
+                                        ...prev,
+                                        defaultModel:
+                                          prev.defaultModel === m.id
+                                            ? nextId
+                                            : prev.defaultModel,
+                                        models: prev.models.map((item) =>
+                                          item.id === m.id
+                                            ? {
+                                                id: nextId,
+                                                capabilities: inferModelCapabilities(nextId),
+                                              }
+                                            : item,
+                                        ),
+                                      }),
+                                      {
+                                        providerId: activeProvider.id,
+                                        oldModelId: m.id,
+                                        newModelId: nextId,
+                                      },
+                                    );
                                     setEditingModelId(null);
                                   } else if (e.key === "Escape") {
                                     setEditingModelId(null);
@@ -1616,6 +1718,7 @@ export function SettingsView() {
                               label={`Edit ${m.id}`}
                               size="xs"
                               variant="ghost"
+                              data-testid={`provider-model-edit-${m.id}`}
                               onClick={() => {
                                 setEditingModelId(m.id);
                                 setEditingModelDraft(m.id);
@@ -1627,11 +1730,28 @@ export function SettingsView() {
                               label={`Delete ${m.id}`}
                               size="xs"
                               variant="ghost"
+                              data-testid={`provider-model-delete-${m.id}`}
                               onClick={() =>
-                                updateProvider(activeProvider.id, (prev) => ({
-                                  ...prev,
-                                  models: prev.models.filter((item) => item.id !== m.id),
-                                }))
+                                updateProvider(
+                                  activeProvider.id,
+                                  (prev) => {
+                                    const remaining = prev.models.filter(
+                                      (item) => item.id !== m.id,
+                                    );
+                                    return {
+                                      ...prev,
+                                      defaultModel:
+                                        prev.defaultModel === m.id
+                                          ? remaining[0]?.id
+                                          : prev.defaultModel,
+                                      models: remaining,
+                                    };
+                                  },
+                                  {
+                                    providerId: activeProvider.id,
+                                    oldModelId: m.id,
+                                  },
+                                )
                               }
                             >
                               <Trash2 size={13} />
@@ -1649,13 +1769,11 @@ export function SettingsView() {
                       variant="danger"
                       size="xs"
                       icon={<Trash2 size={13} />}
+                      data-testid="delete-custom-provider-btn"
                       onClick={() => {
                         const next = providers.filter((p) => p.id !== activeProvider.id);
                         saveProviders(next);
                         void ipc.aiSetKey(activeProvider.id, null);
-                        if (ai?.engine === activeProvider.id) {
-                          set("ai.engine", "local");
-                        }
                         setActiveProviderId(null);
                       }}
                     >

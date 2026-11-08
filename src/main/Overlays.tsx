@@ -161,6 +161,14 @@ export function CommandPalette({
   }, [q, open, onPickSearchHit]);
 
   const totalItems = filtered.length + mailHits.length;
+  const activeDescendantId =
+    hi < filtered.length
+      ? filtered[hi]
+        ? `palette-opt-${filtered[hi].id}`
+        : undefined
+      : mailHits[hi - filtered.length]
+        ? `palette-opt-msg-${mailHits[hi - filtered.length].message_id}`
+        : undefined;
 
   const onKey = (e: React.KeyboardEvent) => {
     if (totalItems === 0) return;
@@ -213,6 +221,7 @@ export function CommandPalette({
                   setHi(0);
                 }}
                 onKeyDown={onKey}
+                aria-activedescendant={activeDescendantId}
                 data-testid="palette-input"
                 style={{ width: "100%" }}
               />
@@ -220,9 +229,7 @@ export function CommandPalette({
             <div
               className="palette-list"
               role="listbox"
-              aria-activedescendant={
-                filtered[hi] ? `palette-opt-${filtered[hi].id}` : undefined
-              }
+              aria-activedescendant={activeDescendantId}
             >
               {filtered.length > 0 && (
                 <div className="palette-group-header">Actions & Views</div>
@@ -267,6 +274,7 @@ export function CommandPalette({
                       <button
                         type="button"
                         key={`mail-${hit.message_id}`}
+                        id={`palette-opt-msg-${hit.message_id}`}
                         className={`nav-item palette-item palette-mail-item${active ? " active" : ""}`}
                         role="option"
                         aria-selected={active}

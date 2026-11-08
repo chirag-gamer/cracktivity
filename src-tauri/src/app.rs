@@ -257,7 +257,9 @@ fn set_status(
 /// accounts read their stored values (FR-1).
 fn endpoint_of(acc: &AccountRow) -> Result<(String, u16), String> {
     if let Some(preset) = providers::ALL.iter().find(|p| p.id == acc.provider) {
-        return Ok((preset.imap_host.into(), preset.imap_port));
+        if !preset.imap_host.is_empty() {
+            return Ok((preset.imap_host.into(), preset.imap_port));
+        }
     }
     let host = acc
         .imap_host
@@ -1053,7 +1055,6 @@ pub async fn set_importance(
 #[allow(clippy::too_many_arguments)]
 pub async fn add_account(
     state: State<'_, AppState>,
-    app: AppHandle,
     provider_id: String,
     email: String,
     password: String,
@@ -1066,9 +1067,14 @@ pub async fn add_account(
     if !email_clean.contains('@') {
         return Err("enter a valid email address".into());
     }
+    let normalized_id = if provider_id == "imap" {
+        "generic"
+    } else {
+        provider_id.as_str()
+    };
     let preset = providers::ALL
         .iter()
-        .find(|p| p.id == provider_id)
+        .find(|p| p.id == normalized_id)
         .ok_or_else(|| format!("unknown provider {provider_id}"))?;
     if preset.auth == providers::AuthKind::OAuth2 {
         return Err(
@@ -1085,6 +1091,12 @@ pub async fn add_account(
     if preset.id == "generic" && smtp_host.is_none() {
         return Err("manual accounts need the SMTP server host".into());
     }
+    // The SQLite accounts.provider CHECK constraint allows ('gmail','outlook','icloud','zoho','yahoo','imap').
+    let db_provider = if preset.id == "generic" {
+        "imap"
+    } else {
+        preset.id
+    };
 
     let account_id = {
         let st = lock_store(&state)?;
@@ -1093,7 +1105,7 @@ pub async fn add_account(
         let id = dao::add_account(
             st.conn(),
             &dao::NewAccount {
-                provider: preset.id,
+                provider: db_provider,
                 email: &email_clean,
                 display_name: None,
                 auth_type: "app_password",
@@ -1125,7 +1137,6 @@ pub async fn add_account(
         }
     };
     state.inner().send(DriverMsg::SyncNow(account_id));
-    let _ = app; // reserved for a future "sync started" toast
     let st = lock_store(&state)?;
     queries::list_accounts(st.conn())
         .map_err(|e| e.to_string())?
@@ -1391,15 +1402,15 @@ pub enum AiEvent {
 }
 
 /// Settings snapshot for AI commands.
-struct AiSettings {
-    enabled: bool,
-    engine_id: String,
-    model: Option<String>,
-    writing_engine_id: Option<String>,
-    writing_model: Option<String>,
-    fallback_engine_id: String,
-    tier_override: Option<String>,
-    providers_config: serde_json::Value,
+pub(crate) struct AiSettings {
+    pub(crate) enabled: bool,
+    pub(crate) engine_id: String,
+    pub(crate) model: Option<String>,
+    pub(crate) writing_engine_id: Option<String>,
+    pub(crate) writing_model: Option<String>,
+    pub(crate) fallback_engine_id: String,
+    pub(crate) tier_override: Option<String>,
+    pub(crate) providers_config: serde_json::Value,
 }
 
 fn default_provider_base_url(id: &str) -> &'static str {
@@ -1432,33 +1443,49 @@ fn default_provider_model(id: &str) -> &'static str {
     }
 }
 
-fn ai_settings_of(state: &State<'_, AppState>) -> AiSettings {
+pub(crate) fn ai_settings_from_conn(conn: &rusqlite::Connection) -> AiSettings {
+    let get = |key: &str| dao::get_setting(conn, key).ok().flatten();
     AiSettings {
-        enabled: get_setting_value(state, "ai.enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        engine_id: get_setting_value(state, "ai.engine")
+        enabled: get("ai.enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+        engine_id: get("ai.engine")
             .and_then(|v| v.as_str().map(String::from))
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "local".to_string()),
-        model: get_setting_value(state, "ai.byo_model")
+        model: get("ai.byo_model")
             .and_then(|v| v.as_str().map(String::from))
             .filter(|s| !s.trim().is_empty()),
-        writing_engine_id: get_setting_value(state, "ai.writing_engine")
+        writing_engine_id: get("ai.writing_engine")
             .and_then(|v| v.as_str().map(String::from))
             .filter(|s| !s.trim().is_empty() && s != "same"),
-        writing_model: get_setting_value(state, "ai.writing_model")
+        writing_model: get("ai.writing_model")
             .and_then(|v| v.as_str().map(String::from))
             .filter(|s| !s.trim().is_empty()),
-        fallback_engine_id: get_setting_value(state, "ai.fallback_engine")
+        fallback_engine_id: get("ai.fallback_engine")
             .and_then(|v| v.as_str().map(String::from))
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "local".to_string()),
-        tier_override: get_setting_value(state, "ai.tier_override")
-            .and_then(|v| v.as_str().map(String::from)),
-        providers_config: get_setting_value(state, "ai.providers_config")
-            .unwrap_or_else(|| serde_json::json!({})),
+        tier_override: get("ai.tier_override").and_then(|v| v.as_str().map(String::from)),
+        providers_config: get("ai.providers_config").unwrap_or_else(|| serde_json::json!({})),
     }
+}
+
+fn ai_settings_of(state: &State<'_, AppState>) -> AiSettings {
+    state
+        .inner()
+        .store
+        .lock()
+        .ok()
+        .map(|st| ai_settings_from_conn(st.conn()))
+        .unwrap_or(AiSettings {
+            enabled: false,
+            engine_id: "local".into(),
+            model: None,
+            writing_engine_id: None,
+            writing_model: None,
+            fallback_engine_id: "local".into(),
+            tier_override: None,
+            providers_config: serde_json::json!({}),
+        })
 }
 
 /// AI status for Settings + onboarding (FR-20/23/25 surface).
@@ -1589,6 +1616,31 @@ pub async fn ai_set_key(
     .map_err(|e| e.to_string())
 }
 
+/// Validates an AI provider endpoint URL:
+/// - Requires `https://` with a non-empty host, OR
+/// - Allows `http://` ONLY when the parsed host is strictly a loopback address
+///   (`localhost`, `127.0.0.1`, `::1`, or `[::1]`). Rejects prefix tricks like
+///   `http://localhost.attacker.example`.
+pub(crate) fn validate_ai_endpoint_url(raw: &str) -> Result<(Url, bool), String> {
+    let parsed = Url::parse(raw.trim()).map_err(|e| format!("invalid endpoint URL: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "endpoint URL must include a host".to_string())?;
+    let is_loopback = matches!(
+        host.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "[::1]"
+    );
+    match parsed.scheme() {
+        "https" => Ok((parsed, false)),
+        "http" if is_loopback => Ok((parsed, true)),
+        "http" => Err(
+            "Base URL must use https:// (or http://localhost / http://127.0.0.1 for local endpoints)"
+                .into(),
+        ),
+        other => Err(format!("unsupported URL scheme '{other}': use https://")),
+    }
+}
+
 /// Queries a provider's `/models` endpoint to test connectivity and return
 /// discovered model IDs (Jan-style Refresh Models & Test Connection).
 #[tauri::command]
@@ -1599,13 +1651,7 @@ pub async fn ai_fetch_models(
     api_format: Option<String>,
 ) -> CmdResult<Vec<String>> {
     let trimmed_url = base_url.trim().to_string();
-    let lower = trimmed_url.to_lowercase();
-    if !lower.starts_with("https://")
-        && !lower.starts_with("http://127.0.0.1")
-        && !lower.starts_with("http://localhost")
-    {
-        return Err("Base URL must use https:// (or http://127.0.0.1 for local endpoints)".into());
-    }
+    validate_ai_endpoint_url(&trimmed_url)?;
     let resolved_key = match api_key.filter(|k| !k.trim().is_empty()) {
         Some(k) => k,
         None => crate::ai::byo_key_target_for_id(&kind)
@@ -1663,35 +1709,17 @@ fn thread_transcript(store: &Store, thrid: &str) -> Result<String, String> {
     Ok(out)
 }
 
-fn build_provider_engine(
-    ai: &Arc<Mutex<crate::ai::AiState>>,
+pub(crate) fn build_byo_provider_engine(
     settings: &AiSettings,
     engine_id: &str,
     override_model: Option<&str>,
 ) -> Result<Box<dyn crate::ai::ChatEngine>, String> {
-    if engine_id == "local" {
-        let mut ai = ai.lock().map_err(|_| "ai poisoned")?;
-        let tier = ai.effective_tier(settings.tier_override.as_deref());
-        let engine = ai.local_engine(tier).map_err(|e| e.to_string())?;
-        return Ok(Box::new(engine));
-    }
-    if engine_id == "chatgpt" {
-        let stored =
-            crate::ai::siwc::load_stored().ok_or("not signed in to ChatGPT (Settings, AI)")?;
-        let access = if crate::ai::siwc::needs_refresh(&stored) {
-            crate::ai::siwc::refresh(&stored).map_err(|e| e.to_string())?;
-            crate::ai::siwc::load_stored()
-                .ok_or("ChatGPT connection vanished")?
-                .access
-        } else {
-            stored.access
-        };
-        let model = override_model
-            .filter(|m| !m.trim().is_empty())
-            .unwrap_or(default_provider_model("chatgpt"));
-        return Ok(Box::new(crate::ai::chat::Responses::new(access, model)));
-    }
     let provider_cfg = &settings.providers_config[engine_id];
+    if provider_cfg["enabled"].as_bool() == Some(false) {
+        return Err(format!(
+            "provider '{engine_id}' is disabled in Settings → AI"
+        ));
+    }
     let configured_base = provider_cfg["baseUrl"]
         .as_str()
         .map(str::trim)
@@ -1702,8 +1730,7 @@ fn build_provider_engine(
             "No base URL configured for provider '{engine_id}' (Settings → AI)"
         ));
     }
-    let is_local_http = configured_base.starts_with("http://127.0.0.1")
-        || configured_base.starts_with("http://localhost");
+    let (_parsed_url, is_local_http) = validate_ai_endpoint_url(configured_base)?;
     let target = crate::ai::byo_key_target_for_id(engine_id).ok_or("unknown engine kind")?;
     let key = match crate::platform::providers::get_account_secret(&target) {
         Ok(k) => k,
@@ -1750,6 +1777,37 @@ fn build_provider_engine(
             model,
         )))
     }
+}
+
+fn build_provider_engine(
+    ai: &Arc<Mutex<crate::ai::AiState>>,
+    settings: &AiSettings,
+    engine_id: &str,
+    override_model: Option<&str>,
+) -> Result<Box<dyn crate::ai::ChatEngine>, String> {
+    if engine_id == "local" {
+        let mut ai = ai.lock().map_err(|_| "ai poisoned")?;
+        let tier = ai.effective_tier(settings.tier_override.as_deref());
+        let engine = ai.local_engine(tier).map_err(|e| e.to_string())?;
+        return Ok(Box::new(engine));
+    }
+    if engine_id == "chatgpt" {
+        let stored =
+            crate::ai::siwc::load_stored().ok_or("not signed in to ChatGPT (Settings, AI)")?;
+        let access = if crate::ai::siwc::needs_refresh(&stored) {
+            crate::ai::siwc::refresh(&stored).map_err(|e| e.to_string())?;
+            crate::ai::siwc::load_stored()
+                .ok_or("ChatGPT connection vanished")?
+                .access
+        } else {
+            stored.access
+        };
+        let model = override_model
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or(default_provider_model("chatgpt"));
+        return Ok(Box::new(crate::ai::chat::Responses::new(access, model)));
+    }
+    build_byo_provider_engine(settings, engine_id, override_model)
 }
 
 /// Runs the streaming task with the FR-24 fallback chain: chosen engine →
@@ -2456,5 +2514,81 @@ mod tests {
         let all =
             queries::thread_list(st.conn(), Scope::Unified, ImportanceFilter::All, 50, 0).unwrap();
         assert!(all.is_empty());
+    }
+
+    #[test]
+    fn validate_ai_endpoint_url_rejects_localhost_prefix_spoofing() {
+        assert!(validate_ai_endpoint_url("http://localhost.attacker.example/v1").is_err());
+        assert!(validate_ai_endpoint_url("http://127.0.0.1.attacker.example/v1").is_err());
+        assert!(validate_ai_endpoint_url("http://remote.example.com/v1").is_err());
+        assert_eq!(
+            validate_ai_endpoint_url("http://localhost:11434/v1")
+                .unwrap()
+                .1,
+            true
+        );
+        assert_eq!(
+            validate_ai_endpoint_url("http://127.0.0.1:1234/v1")
+                .unwrap()
+                .1,
+            true
+        );
+        assert_eq!(
+            validate_ai_endpoint_url("https://api.openai.com/v1")
+                .unwrap()
+                .1,
+            false
+        );
+    }
+
+    #[test]
+    fn generic_account_maps_to_imap_schema_and_resolves_custom_endpoints() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::webview::InvokeRequest;
+        use tauri::Manager;
+
+        let (_dir, state) = seeded_state();
+        let app = mock_builder()
+            .invoke_handler(tauri::generate_handler![super::add_account])
+            .build(mock_context(noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+
+        let res = tauri::test::get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "add_account".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "providerId": "generic",
+                    "email": "iqbalmaarif@invosa.com",
+                    "password": "test-app-password",
+                    "imapHost": "imap.invosa.com",
+                    "imapPort": 993,
+                    "smtpHost": "smtp.invosa.com",
+                    "smtpPort": 587
+                })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .expect("add_account generic must succeed against SQLCipher CHECK constraint")
+        .deserialize::<serde_json::Value>()
+        .unwrap();
+
+        let acc_id = res["id"].as_i64().unwrap();
+        assert_eq!(res["provider"].as_str(), Some("imap"));
+        assert_eq!(res["email"].as_str(), Some("iqbalmaarif@invosa.com"));
+
+        let app_state = app.state::<AppState>();
+        let st = app_state.store.lock().unwrap();
+        let smtp_ep = crate::mail::smtp::smtp_endpoint_of(st.conn(), acc_id).unwrap();
+        assert_eq!(smtp_ep, ("smtp.invosa.com".to_string(), 587));
+        let _ = providers::delete_account_secret(&providers::app_password_target(acc_id));
     }
 }

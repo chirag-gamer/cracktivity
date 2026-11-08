@@ -6,7 +6,8 @@
  * disabled), deterministic accessible avatars, semantic badges, shortcut chips,
  * structured empty/onboarding cards, and action toasts.
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, X } from "lucide-react";
 
 export type ButtonVariant =
@@ -391,10 +392,11 @@ export interface UiSelectOption {
 }
 
 /**
- * Custom accessible dropdown menu replacing dated Win32 native `<select>`
- * popups while keeping a synchronized visually-hidden `<select>` so label
- * associations (`htmlFor` / `getByLabelText`) and `fireEvent.change` tests
- * work identically.
+ * Custom accessible combobox/listbox menu replacing dated Win32 native `<select>`
+ * popups. Associates `<label htmlFor={id}>` and `data-testid={testId}` directly
+ * with the focusable trigger button, renders the listbox via a body portal with
+ * viewport-aware flip placement so scroll containers never clip options, and
+ * restores focus to the trigger when dismissed via Escape or option selection.
  */
 export function UiSelect({
   id,
@@ -417,29 +419,97 @@ export function UiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = useId();
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
+
   const current =
     options.find((o) => o.value === value) ??
     options[0] ?? { value, label: value };
 
+  // Support programmatic `fireEvent.change(getByTestId(...), { target: { value } })`
+  // directly on the trigger button so label/test contracts work without a hidden proxy.
+  useEffect(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    el.value = value;
+    const onNativeChange = (e: Event) => {
+      const nextVal = (e.target as HTMLButtonElement | null)?.value;
+      if (typeof nextVal === "string") {
+        onChange(nextVal);
+      }
+    };
+    el.addEventListener("change", onNativeChange);
+    return () => el.removeEventListener("change", onNativeChange);
+  }, [value, onChange]);
+
+  const updatePopoverPosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const viewportH = window.innerHeight || 800;
+    const viewportW = window.innerWidth || 1280;
+    const estimatedHeight = Math.min(280, options.length * 40 + 16);
+    const spaceBelow = viewportH - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const placeAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(280, placeAbove ? spaceAbove : spaceBelow));
+    const width = Math.max(rect.width, 180);
+    const left = Math.max(8, Math.min(rect.left, viewportW - width - 8));
+
+    setPopoverStyle(
+      placeAbove
+        ? {
+            position: "fixed",
+            left: `${left}px`,
+            bottom: `${viewportH - rect.top + 6}px`,
+            width: `${width}px`,
+            maxHeight: `${maxHeight}px`,
+            zIndex: 10000,
+          }
+        : {
+            position: "fixed",
+            left: `${left}px`,
+            top: `${rect.bottom + 6}px`,
+            width: `${width}px`,
+            maxHeight: `${maxHeight}px`,
+            zIndex: 10000,
+          },
+    );
+  }, [options.length]);
+
   useEffect(() => {
     if (!open) return;
+    updatePopoverPosition();
     const onDocDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        wrapRef.current &&
+        !wrapRef.current.contains(target) &&
+        (!popoverRef.current || !popoverRef.current.contains(target))
+      ) {
         setOpen(false);
       }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.stopPropagation();
         setOpen(false);
+        triggerRef.current?.focus();
       }
     };
+    window.addEventListener("resize", updatePopoverPosition);
+    window.addEventListener("scroll", updatePopoverPosition, true);
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("keydown", onKey);
     return () => {
+      window.removeEventListener("resize", updatePopoverPosition);
+      window.removeEventListener("scroll", updatePopoverPosition, true);
       document.removeEventListener("mousedown", onDocDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, updatePopoverPosition]);
 
   const onTriggerKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
@@ -465,34 +535,26 @@ export function UiSelect({
       ref={wrapRef}
       className={`ui-select${open ? " is-open" : ""}${disabled ? " is-disabled" : ""} ${className}`.trim()}
     >
-      <select
-        id={id}
-        data-testid={testId}
-        aria-label={ariaLabel}
-        className="ui-select__native-sr"
-        value={value}
-        disabled={disabled}
-        tabIndex={-1}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
       <button
+        ref={triggerRef}
+        id={id}
         type="button"
+        role="combobox"
+        value={value}
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
         aria-label={ariaLabel}
-        data-testid={testId ? `${testId}-trigger` : undefined}
+        data-testid={testId}
         className="ui-select__trigger"
         onClick={() => !disabled && setOpen((v) => !v)}
         onKeyDown={onTriggerKeyDown}
       >
-        <span className="ui-select__trigger-main">
+        <span
+          className="ui-select__trigger-main"
+          data-testid={testId ? `${testId}-trigger` : undefined}
+        >
           {current.icon && (
             <span className="ui-select__trigger-icon">{current.icon}</span>
           )}
@@ -506,43 +568,53 @@ export function UiSelect({
           className={`ui-select__chevron${open ? " is-open" : ""}`}
         />
       </button>
-      {open && (
-        <div className="ui-select__popover" role="listbox">
-          {options.map((o) => {
-            const active = o.value === value;
-            return (
-              <button
-                type="button"
-                key={o.value}
-                role="option"
-                aria-selected={active}
-                data-testid={testId ? `${testId}-opt-${o.value}` : undefined}
-                className={`ui-select__option${active ? " is-selected" : ""}`}
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="ui-select__opt-body">
-                  {o.icon && <span className="ui-select__opt-icon">{o.icon}</span>}
-                  <span className="ui-select__opt-text">
-                    <span className="ui-select__opt-label">{o.label}</span>
-                    {o.description && (
-                      <span className="ui-select__opt-desc">{o.description}</span>
-                    )}
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            id={listboxId}
+            className="ui-select__popover"
+            role="listbox"
+            style={popoverStyle}
+          >
+            {options.map((o) => {
+              const active = o.value === value;
+              return (
+                <button
+                  type="button"
+                  key={o.value}
+                  role="option"
+                  aria-selected={active}
+                  data-testid={testId ? `${testId}-opt-${o.value}` : undefined}
+                  className={`ui-select__option${active ? " is-selected" : ""}`}
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                    triggerRef.current?.focus();
+                  }}
+                >
+                  <span className="ui-select__opt-body">
+                    {o.icon && <span className="ui-select__opt-icon">{o.icon}</span>}
+                    <span className="ui-select__opt-text">
+                      <span className="ui-select__opt-label">{o.label}</span>
+                      {o.description && (
+                        <span className="ui-select__opt-desc">{o.description}</span>
+                      )}
+                    </span>
                   </span>
-                </span>
-                <span className="ui-select__opt-right">
-                  {o.badge && (
-                    <span className="ui-select__opt-badge">{o.badge}</span>
-                  )}
-                  {active && <Check size={13} className="ui-select__check" />}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+                  <span className="ui-select__opt-right">
+                    {o.badge && (
+                      <span className="ui-select__opt-badge">{o.badge}</span>
+                    )}
+                    {active && <Check size={13} className="ui-select__check" />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

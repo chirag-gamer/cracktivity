@@ -17,6 +17,7 @@ import {
 import { ExternalLink, KeyRound, Mail, Server, ShieldCheck } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
+import { UiSelect } from "../shared/ui";
 
 /** Mirrors src-tauri/src/platform/providers.rs (verified presets, D-021). */
 const PROVIDERS = [
@@ -226,15 +227,17 @@ export function AddAccountDialog({
                   />
                 </Field>
                 <Field label="SMTP port & TLS mode">
-                  <select
-                    className="native-select"
+                  <UiSelect
+                    id="account-smtp-port"
+                    testId="account-smtp-port"
+                    ariaLabel="SMTP port & TLS mode"
                     value={String(smtpPort)}
-                    onChange={(e) => setSmtpPort(Number(e.target.value))}
-                    data-testid="account-smtp-port"
-                  >
-                    <option value="587">587 (STARTTLS)</option>
-                    <option value="465">465 (Implicit TLS / SSL)</option>
-                  </select>
+                    options={[
+                      { value: "587", label: "587 (STARTTLS)" },
+                      { value: "465", label: "465 (Implicit TLS / SSL)" },
+                    ]}
+                    onChange={(val) => setSmtpPort(Number(val))}
+                  />
                 </Field>
               </>
             )}

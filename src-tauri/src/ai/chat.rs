@@ -290,6 +290,22 @@ impl OpenAiCompat {
     }
 }
 
+/// Strips URL userinfo (`user:pass@`), query strings (`?key=...`), and
+/// fragments (`#...`) before recording an endpoint URL in error messages or
+/// diagnostic logs so embedded credentials never leak into logs or issue reports.
+pub fn sanitize_url_for_log(raw: &str) -> String {
+    match url::Url::parse(raw.trim()) {
+        Ok(mut parsed) => {
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            parsed.set_query(None);
+            parsed.set_fragment(None);
+            parsed.to_string()
+        }
+        Err(_) => "<invalid-url>".to_string(),
+    }
+}
+
 /// Normalizes a provider base URL (`https://api.openai.com`,
 /// `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`,
 /// `https://generativelanguage.googleapis.com/v1beta/openai`, etc.) into its
@@ -298,9 +314,11 @@ pub fn resolve_completions_url(base_url: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.ends_with("/chat/completions") {
         trimmed.to_string()
+    } else if trimmed.contains("generativelanguage.googleapis.com") && trimmed.ends_with("/v1beta")
+    {
+        format!("{trimmed}/openai/chat/completions")
     } else if trimmed.ends_with("/v1")
         || trimmed.ends_with("/openai")
-        || trimmed.ends_with("/v1beta")
         || trimmed.ends_with("/api/v3")
     {
         format!("{trimmed}/chat/completions")
@@ -309,21 +327,46 @@ pub fn resolve_completions_url(base_url: &str) -> String {
     }
 }
 
-/// Normalizes a provider base URL into its `/models` discovery endpoint.
-pub fn resolve_models_url(base_url: &str) -> String {
+/// Normalizes a provider base URL into its `/models` discovery endpoint
+/// according to wire format (`is_anthropic = true` for Anthropic native
+/// endpoints, `false` for OpenAI-compatible endpoints including Gemini's
+/// `/v1beta/openai` layer).
+pub fn resolve_models_url(base_url: &str, is_anthropic: bool) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
-    if let Some(prefix) = trimmed.strip_suffix("/chat/completions") {
-        format!("{prefix}/models")
-    } else if trimmed.ends_with("/models") {
-        trimmed.to_string()
-    } else if trimmed.ends_with("/v1")
-        || trimmed.ends_with("/openai")
-        || trimmed.ends_with("/v1beta")
-        || trimmed.ends_with("/api/v3")
-    {
-        format!("{trimmed}/models")
+    if is_anthropic {
+        let without_msgs = trimmed
+            .strip_suffix("/v1/messages")
+            .or_else(|| trimmed.strip_suffix("/messages"))
+            .unwrap_or(trimmed)
+            .trim_end_matches('/');
+        if without_msgs.ends_with("/models") {
+            without_msgs.to_string()
+        } else if without_msgs.ends_with("/v1") {
+            format!("{without_msgs}/models")
+        } else {
+            format!("{without_msgs}/v1/models")
+        }
     } else {
-        format!("{trimmed}/v1/models")
+        let base = trimmed
+            .strip_suffix("/chat/completions")
+            .or_else(|| trimmed.strip_suffix("/completions"))
+            .unwrap_or(trimmed)
+            .trim_end_matches('/');
+        if base.ends_with("/models") {
+            base.to_string()
+        } else if base.contains("generativelanguage.googleapis.com") {
+            if base.ends_with("/v1beta/openai") || base.ends_with("/openai") {
+                format!("{base}/models")
+            } else if base.ends_with("/v1beta") {
+                format!("{base}/openai/models")
+            } else {
+                format!("{base}/v1beta/openai/models")
+            }
+        } else if base.ends_with("/v1") || base.ends_with("/openai") || base.ends_with("/api/v3") {
+            format!("{base}/models")
+        } else {
+            format!("{base}/v1/models")
+        }
     }
 }
 
@@ -334,7 +377,8 @@ pub fn fetch_provider_models(
     api_key: &str,
     is_anthropic: bool,
 ) -> Result<Vec<String>, ChatError> {
-    let url = resolve_models_url(base_url);
+    let url = resolve_models_url(base_url, is_anthropic);
+    let safe_url = sanitize_url_for_log(&url);
     log_host(&url);
     let config = ureq::config::Config::builder()
         .timeout_global(Some(std::time::Duration::from_secs(20)))
@@ -351,8 +395,8 @@ pub fn fetch_provider_models(
     }
     let response = req.call().map_err(|e| {
         let msg = match e {
-            ureq::Error::StatusCode(code) => format!("HTTP {code} from {url}"),
-            other => format!("connection failed ({url}): {other}"),
+            ureq::Error::StatusCode(code) => format!("HTTP {code} from {safe_url}"),
+            other => format!("connection failed ({safe_url}): {other}"),
         };
         crate::platform::applog::record("error", format!("model discovery failed: {msg}"));
         ChatError(msg)
@@ -362,7 +406,7 @@ pub fn fetch_provider_models(
         .read_to_string()
         .map_err(|e| ChatError(format!("read models response: {e}")))?;
     let v: serde_json::Value = serde_json::from_str(&body_str)
-        .map_err(|e| ChatError(format!("invalid JSON from {url}: {e}")))?;
+        .map_err(|e| ChatError(format!("invalid JSON from {safe_url}: {e}")))?;
     let mut models = Vec::new();
     if let Some(arr) = v["data"].as_array().or_else(|| v["models"].as_array()) {
         for item in arr {
@@ -388,6 +432,7 @@ impl ChatEngine for OpenAiCompat {
             .build();
         let agent = ureq::Agent::new_with_config(config);
         let url = resolve_completions_url(&self.base_url);
+        let safe_url = sanitize_url_for_log(&url);
         log_host(&self.base_url);
         let mut req = agent.post(&url).header("Content-Type", "application/json");
         if !self.api_key.expose_secret().trim().is_empty() {
@@ -399,9 +444,9 @@ impl ChatEngine for OpenAiCompat {
         let response = req.send(self.request_body(msgs)).map_err(|e| {
             let msg = match e {
                 ureq::Error::StatusCode(code) => {
-                    format!("API error {code} ({url}, model={})", self.model)
+                    format!("API error {code} ({safe_url}, model={})", self.model)
                 }
-                other => format!("connection failed ({url}): {other}"),
+                other => format!("connection failed ({safe_url}): {other}"),
             };
             crate::platform::applog::record("error", format!("AI chat error: {msg}"));
             ChatError(msg)
@@ -538,6 +583,7 @@ impl ChatEngine for Anthropic {
             .build();
         let agent = ureq::Agent::new_with_config(config);
         let url = resolve_anthropic_url(&self.base_url);
+        let safe_url = sanitize_url_for_log(&url);
         log_host(&url);
         let response = agent
             .post(&url)
@@ -548,9 +594,9 @@ impl ChatEngine for Anthropic {
             .map_err(|e| {
                 let msg = match e {
                     ureq::Error::StatusCode(code) => {
-                        format!("API error {code} ({url}, model={})", self.model)
+                        format!("API error {code} ({safe_url}, model={})", self.model)
                     }
-                    other => format!("connection failed ({url}): {other}"),
+                    other => format!("connection failed ({safe_url}): {other}"),
                 };
                 crate::platform::applog::record("error", format!("Anthropic AI error: {msg}"));
                 ChatError(msg)
@@ -685,12 +731,43 @@ mod tests {
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         );
         assert_eq!(
-            resolve_models_url("https://api.groq.com/openai/v1"),
+            resolve_completions_url("https://generativelanguage.googleapis.com/v1beta"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
+        assert_eq!(
+            resolve_models_url("https://api.groq.com/openai/v1", false),
             "https://api.groq.com/openai/v1/models"
+        );
+        assert_eq!(
+            resolve_models_url(
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                false
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        );
+        assert_eq!(
+            resolve_models_url("https://generativelanguage.googleapis.com/v1beta", false),
+            "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        );
+        assert_eq!(
+            resolve_models_url("https://api.anthropic.com", true),
+            "https://api.anthropic.com/v1/models"
+        );
+        assert_eq!(
+            resolve_models_url("https://api.anthropic.com/v1/messages", true),
+            "https://api.anthropic.com/v1/models"
         );
         assert_eq!(
             resolve_anthropic_url("https://api.anthropic.com"),
             "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn sanitize_url_for_log_strips_userinfo_and_query_params() {
+        assert_eq!(
+            sanitize_url_for_log("https://user:secret_pass@proxy.example.com:8443/v1/chat/completions?api_key=sk-12345#frag"),
+            "https://proxy.example.com:8443/v1/chat/completions"
         );
     }
 

@@ -17,6 +17,7 @@ import {
   StatusDot,
   ToastBanner,
   UiButton,
+  UiSelect,
   extractInitials,
   hashAvatarSlot,
 } from "../shared/ui";
@@ -347,7 +348,10 @@ describe("Onboarding Wizard & First-Run Experience", () => {
             model_disk_bytes: 397_000_000,
           };
         case "get_settings":
-          return {};
+          return {
+            "ai.engine": "anthropic",
+            "ai.byo_model": "claude-sonnet-4-5",
+          };
         case "mcp_audit_tail":
           return [];
         case "diagnostics_hosts":
@@ -378,6 +382,9 @@ describe("Onboarding Wizard & First-Run Experience", () => {
     ).toBe("https://api.anthropic.com");
     expect(getByTestId("provider-model-claude-sonnet-4-5")).toBeInTheDocument();
 
+    // Close the provider settings modal before clicking Add Provider trigger
+    fireEvent.click(getByTestId("provider-modal-close"));
+
     // Open Add Custom Provider dialog and create a custom endpoint
     fireEvent.click(getByTestId("add-provider-trigger"));
     expect(await findByTestId("add-provider-dialog")).toBeInTheDocument();
@@ -399,6 +406,50 @@ describe("Onboarding Wizard & First-Run Experience", () => {
         ),
       ).toBe(true),
     );
+
+    // Deleting the active custom provider reconciles ai.engine back to local
+    fireEvent.click(await findByTestId("delete-custom-provider-btn"));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          ([c, a]) =>
+            c === "set_setting" &&
+            a?.key === "ai.engine" &&
+            a?.value === "local",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("UiSelect associates label htmlFor with the trigger button and restores focus on Escape", () => {
+    const onChange = vi.fn();
+    const { getByLabelText, getByRole } = render(
+      <div>
+        <label htmlFor="theme-select-test">Appearance Theme</label>
+        <UiSelect
+          id="theme-select-test"
+          value="dark"
+          onChange={onChange}
+          options={[
+            { value: "dark", label: "Dark" },
+            { value: "light", label: "Light" },
+          ]}
+        />
+      </div>,
+    );
+
+    const trigger = getByLabelText("Appearance Theme") as HTMLButtonElement;
+    expect(trigger.tagName).toBe("BUTTON");
+
+    fireEvent.click(trigger);
+    const listbox = getByRole("listbox");
+    expect(listbox).toBeInTheDocument();
+
+    const lightOpt = getByRole("option", { name: "Light" });
+    lightOpt.focus();
+    fireEvent.keyDown(listbox, { key: "Escape" });
+
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("Composer pop-out button opens a standalone composer window", async () => {

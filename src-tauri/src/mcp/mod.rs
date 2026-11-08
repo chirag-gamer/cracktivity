@@ -348,57 +348,33 @@ impl CracktivityMcp {
         Parameters(p): Parameters<ThreadParams>,
     ) -> Result<CallToolResult, McpError> {
         let transcript = self.transcript(&p.thread_id)?;
-        let (enabled, engine, model) = {
+        let settings = {
             let st = self.store.lock().map_err(|_| err("store poisoned"))?;
-            (
-                dao::get_setting(st.conn(), "ai.enabled")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                dao::get_setting(st.conn(), "ai.engine")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.as_str().and_then(crate::ai::EngineKind::parse))
-                    .unwrap_or(crate::ai::EngineKind::Local),
-                dao::get_setting(st.conn(), "ai.byo_model")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.as_str().map(String::from)),
-            )
+            crate::app::ai_settings_from_conn(st.conn())
         };
-        if !enabled {
+        if !settings.enabled {
             return Err(err("AI is disabled by the user"));
         }
-        if engine == crate::ai::EngineKind::Local {
+        if settings.engine_id == "local" {
             return Err(err(
                 "the local model runs only inside the cracktivity app; configure a BYO engine for MCP use",
             ));
         }
-        let key = crate::platform::providers::get_account_secret(crate::ai::byo_key_target(engine))
-            .map_err(|_| err(format!("no {} key configured", engine.as_str())))?;
-        let model = model.unwrap_or_else(|| engine.default_model().into());
+        if settings.engine_id == "chatgpt" {
+            // D-047: the ChatGPT-plan connection is scoped to the
+            // app's own AI features; MCP agents use BYO API keys.
+            return Err(err(
+                "the ChatGPT plan connection runs only inside the cracktivity app; configure a BYO engine for MCP use",
+            ));
+        }
         // Blocking inference off the async worker; passes run sequentially.
         let summary = tokio::task::spawn_blocking(move || -> Result<String, McpError> {
-            let boxed: Box<dyn crate::ai::ChatEngine> = match engine {
-                crate::ai::EngineKind::Anthropic => {
-                    Box::new(crate::ai::chat::Anthropic::new(&key, &model))
-                }
-                crate::ai::EngineKind::OpenAi => {
-                    Box::new(crate::ai::chat::OpenAiCompat::openai(&key, &model))
-                }
-                crate::ai::EngineKind::Xai => {
-                    Box::new(crate::ai::chat::OpenAiCompat::xai(&key, &model))
-                }
-                crate::ai::EngineKind::ChatGpt => {
-                    // D-047: the ChatGPT-plan connection is scoped to the
-                    // app's own AI features; MCP agents use BYO API keys.
-                    return Err(err(
-                        "the ChatGPT plan connection runs only inside the cracktivity app; configure a BYO engine for MCP use".to_string(),
-                    ));
-                }
-                crate::ai::EngineKind::Local => unreachable!("checked above"),
-            };
+            let boxed = crate::app::build_byo_provider_engine(
+                &settings,
+                &settings.engine_id,
+                settings.model.as_deref(),
+            )
+            .map_err(err)?;
             let passes = crate::ai::prompts::summarize_messages(&transcript);
             let mut parts = Vec::new();
             for pass in &passes {

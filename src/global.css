@@ -3063,14 +3063,11 @@ kbd {
 }
 
 .ui-select__popover {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 0;
-  min-width: 100%;
-  max-width: 360px;
-  max-height: 270px;
+  position: fixed;
+  max-width: 420px;
+  max-height: 280px;
   overflow-y: auto;
-  z-index: 1200;
+  z-index: 10000;
   padding: 5px;
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
@@ -3380,7 +3377,7 @@ kbd {
 }
 
 .jan-accent-link {
-  color: #e06c4c;
+  color: var(--accent-text);
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;

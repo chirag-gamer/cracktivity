@@ -39,6 +39,9 @@ function parseComposerState(): ComposerTarget {
         inReplyTo: parsed.inReplyTo ?? null,
         threadId: parsed.threadId ?? null,
         initialBody: typeof parsed.initialBody === "string" ? parsed.initialBody : "",
+        instruction:
+          typeof parsed.instruction === "string" ? parsed.instruction : undefined,
+        skipAutoStream: Boolean(parsed.skipAutoStream),
       };
     }
   } catch {
