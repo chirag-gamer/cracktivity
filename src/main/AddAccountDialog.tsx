@@ -71,6 +71,7 @@ export function AddAccountDialog({
   const [password, setPassword] = useState("");
   const [host, setHost] = useState("");
   const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState<number>(587);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const preset = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
@@ -82,7 +83,9 @@ export function AddAccountDialog({
       const trimmedImap = host.trim();
       const trimmedSmtp =
         smtpHost.trim() ||
-        (trimmedImap ? trimmedImap.replace(/^imap\./i, "smtp.") : "");
+        (/^imap\./i.test(trimmedImap)
+          ? trimmedImap.replace(/^imap\./i, "smtp.")
+          : "");
       await ipc.addAccount(
         provider,
         email.trim(),
@@ -90,6 +93,7 @@ export function AddAccountDialog({
         provider === "generic" ? trimmedImap : undefined,
         undefined,
         provider === "generic" ? trimmedSmtp : undefined,
+        provider === "generic" ? smtpPort : undefined,
       );
       onAdded();
       onClose();
@@ -97,6 +101,7 @@ export function AddAccountDialog({
       setPassword("");
       setHost("");
       setSmtpHost("");
+      setSmtpPort(587);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -162,6 +167,13 @@ export function AddAccountDialog({
                       target="_blank"
                       rel="noopener noreferrer"
                       className="provider-guide-link"
+                      data-testid="provider-password-link"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (preset.url) {
+                          void ipc.openExternalUrl(preset.url);
+                        }
+                      }}
                     >
                       <span>{S.providerPage}</span>
                       <ExternalLink size={11} />
@@ -205,13 +217,24 @@ export function AddAccountDialog({
                   <Input
                     value={smtpHost}
                     placeholder={
-                      host.trim()
+                      /^imap\./i.test(host.trim())
                         ? host.trim().replace(/^imap\./i, "smtp.")
                         : "smtp.example.com"
                     }
                     onChange={(_, d) => setSmtpHost(d.value)}
                     data-testid="account-smtp-host"
                   />
+                </Field>
+                <Field label="SMTP port & TLS mode">
+                  <select
+                    className="native-select"
+                    value={String(smtpPort)}
+                    onChange={(e) => setSmtpPort(Number(e.target.value))}
+                    data-testid="account-smtp-port"
+                  >
+                    <option value="587">587 (STARTTLS)</option>
+                    <option value="465">465 (Implicit TLS / SSL)</option>
+                  </select>
                 </Field>
               </>
             )}

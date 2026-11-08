@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Input, Text, Textarea } from "@fluentui/react-components";
-import { Send, Sparkles, SquarePen, X } from "lucide-react";
+import { Maximize2, Send, Sparkles, SquarePen, X } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
 import { IconButton, Kbd } from "../shared/ui";
@@ -15,6 +15,7 @@ export interface ComposerTarget {
   accountId: number;
   /** Prefilled reply context (FR-13 follow-up / FR-22 AI draft). */
   to: Addr[];
+  cc?: Addr[];
   subject: string;
   inReplyTo?: string | null;
   threadId?: string | null;
@@ -28,11 +29,19 @@ export interface ComposerProps {
   target: ComposerTarget;
   onClose: () => void;
   onSent: () => void;
+  standaloneWindow?: boolean;
 }
 
-export function Composer({ target, onClose, onSent }: ComposerProps) {
+export function Composer({
+  target,
+  onClose,
+  onSent,
+  standaloneWindow = false,
+}: ComposerProps) {
   const [to, setTo] = useState(target.to.map((a) => a.email).join(", "));
-  const [cc, setCc] = useState("");
+  const [cc, setCc] = useState(
+    target.cc ? target.cc.map((a) => a.email).join(", ") : "",
+  );
   const [subject, setSubject] = useState(target.subject);
   const [body, setBody] = useState(target.initialBody ?? "");
   const [status, setStatus] = useState<"editing" | "sending" | "failed">("editing");
@@ -141,8 +150,30 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
     }
   };
 
+  const handlePopOut = async () => {
+    const payload: ComposerTarget = {
+      accountId: target.accountId,
+      to: parseAddrs(to),
+      cc: parseAddrs(cc),
+      subject,
+      inReplyTo: target.inReplyTo ?? null,
+      threadId: target.threadId ?? null,
+      initialBody: bodyRef.current,
+    };
+    try {
+      await ipc.openComposerWindow(JSON.stringify(payload));
+      onClose();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   return (
-    <div className="composer" data-testid="composer" onKeyDown={onKeyDown}>
+    <div
+      className={`composer${standaloneWindow ? " composer--standalone" : ""}`}
+      data-testid="composer"
+      onKeyDown={onKeyDown}
+    >
       <div className="composer-head">
         <div className="composer-head__title">
           <span className="composer-head__icon">
@@ -151,9 +182,21 @@ export function Composer({ target, onClose, onSent }: ComposerProps) {
           <span>{target.inReplyTo || target.threadId ? S.replyTitle : S.composeTitle}</span>
           <span className="composer-autosave-pill">Autosaved locally</span>
         </div>
-        <IconButton label="Close composer" size="xs" onClick={onClose}>
-          <X size={14} />
-        </IconButton>
+        <div className="composer-head__actions">
+          {!standaloneWindow && (
+            <IconButton
+              label="Pop out into separate window"
+              size="xs"
+              data-testid="composer-popout"
+              onClick={() => void handlePopOut()}
+            >
+              <Maximize2 size={13} />
+            </IconButton>
+          )}
+          <IconButton label="Close composer" size="xs" onClick={onClose}>
+            <X size={14} />
+          </IconButton>
+        </div>
       </div>
 
       <div className="composer-fields">

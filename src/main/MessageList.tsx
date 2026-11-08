@@ -182,7 +182,9 @@ export function MessageList({
                 <div className="row-lead-col">
                   <span
                     className={`row-unread-dot${unread ? " is-visible" : ""}`}
-                    aria-hidden="true"
+                    role={unread ? "img" : undefined}
+                    aria-label={unread ? "Unread" : undefined}
+                    aria-hidden={unread ? undefined : "true"}
                   />
                   <Avatar
                     name={name}

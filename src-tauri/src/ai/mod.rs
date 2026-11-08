@@ -37,6 +37,25 @@ pub fn byo_key_target(kind: EngineKind) -> &'static str {
     }
 }
 
+/// Dynamic Credential Manager target for built-in and custom BYO provider IDs.
+/// Rejects empty or non-slug IDs so keys are always cleanly namespaced.
+pub fn byo_key_target_for_id(id: &str) -> Option<String> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() || trimmed == "local" || trimmed.len() > 64 {
+        return None;
+    }
+    if trimmed == "chatgpt" {
+        return Some("cracktivity.chatgpt.access".to_string());
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return None;
+    }
+    Some(format!("cracktivity.byo.{trimmed}"))
+}
+
 /// Everything a task needs to run inference: the resolved engine plus the
 /// notice when a BYO engine fell back to the local model (FR-24 AC).
 pub struct ResolvedEngine {

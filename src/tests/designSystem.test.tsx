@@ -25,6 +25,8 @@ import { MessageList } from "../main/MessageList";
 import { Reader } from "../main/Reader";
 import { OnboardingDialog } from "../main/Onboarding";
 import { AddAccountDialog } from "../main/AddAccountDialog";
+import { SettingsView } from "../main/SettingsView";
+import { Composer } from "../main/Composer";
 import { message, thread } from "./fixtures";
 
 beforeEach(() => {
@@ -227,25 +229,72 @@ describe("Onboarding Wizard & First-Run Experience", () => {
     expect(onFinish).toHaveBeenCalledTimes(1);
   });
 
-  it("AddAccountDialog quick provider pills switch the active provider", () => {
-    const { getByText, queryByTestId } = render(
+  it("AddAccountDialog quick provider pills, external password page link, and manual SMTP port/host validation work", async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+    mockIPC((cmd, args) => {
+      calls.push([cmd, args as Record<string, unknown>]);
+      if (cmd === "add_account") {
+        return { id: 9, email: "user@custom.org", display_name: null, unread: 0 };
+      }
+      return null;
+    });
+
+    const { getByText, getByTestId, queryByTestId } = render(
       <ThemeProvider>
         <AddAccountDialog open onClose={() => {}} onAdded={() => {}} />
       </ThemeProvider>,
     );
+
+    // Clicking Provider password page invokes open_external_url via ShellExecuteW
+    fireEvent.click(getByTestId("provider-password-link"));
+    await waitFor(() =>
+      expect(calls.some(([c]) => c === "open_external_url")).toBe(true),
+    );
+    expect(calls.find(([c]) => c === "open_external_url")?.[1]).toMatchObject({
+      url: "https://myaccount.google.com/apppasswords",
+    });
+
     expect(queryByTestId("account-host")).not.toBeInTheDocument();
     expect(queryByTestId("account-smtp-host")).not.toBeInTheDocument();
     fireEvent.click(getByText("Other (IMAP)"));
     expect(queryByTestId("account-host")).toBeInTheDocument();
     expect(queryByTestId("account-smtp-host")).toBeInTheDocument();
+    expect(queryByTestId("account-smtp-port")).toBeInTheDocument();
+
+    // Non-imap.* host with blank SMTP field must pass empty smtpHost (Cubic #4)
+    // and selected SMTP port 465 (Cubic #5)
+    fireEvent.change(getByTestId("account-email"), {
+      target: { value: "user@custom.org" },
+    });
+    fireEvent.change(getByTestId("account-password"), {
+      target: { value: "secret1234" },
+    });
+    fireEvent.change(getByTestId("account-host"), {
+      target: { value: "mail.custom.org" },
+    });
+    fireEvent.change(getByTestId("account-smtp-port"), {
+      target: { value: "465" },
+    });
+    fireEvent.click(getByTestId("add-account-submit"));
+
+    await waitFor(() =>
+      expect(calls.some(([c]) => c === "add_account")).toBe(true),
+    );
+    const addCall = calls.find(([c]) => c === "add_account")?.[1];
+    expect(addCall).toMatchObject({
+      providerId: "generic",
+      imapHost: "mail.custom.org",
+      smtpHost: "",
+      smtpPort: 465,
+    });
   });
 
-  it("MessageList first-run empty state triggers onAddAccount and row hover actions work", () => {
+  it("MessageList first-run empty state triggers onAddAccount, unread indicator is accessible, and row hover actions work", () => {
     const onAddAccount = vi.fn();
     const onArchiveThread = vi.fn();
     const onToggleStarThread = vi.fn();
 
-    const { getByText, rerender, getAllByLabelText } = render(
+    const { getByText, rerender, getAllByLabelText, queryByLabelText } = render(
       <MessageList
         threads={[]}
         selectedThrid={null}
@@ -261,7 +310,7 @@ describe("Onboarding Wizard & First-Run Experience", () => {
 
     rerender(
       <MessageList
-        threads={[thread(1)]}
+        threads={[thread(1, { unread_count: 1 })]}
         selectedThrid="t1"
         onSelect={() => {}}
         loading={false}
@@ -271,10 +320,113 @@ describe("Onboarding Wizard & First-Run Experience", () => {
       />,
     );
 
+    // Unread thread exposes role="img" aria-label="Unread" (Cubic #6)
+    expect(queryByLabelText("Unread")).toBeInTheDocument();
+
     fireEvent.click(getAllByLabelText("Archive thread")[0]!);
     expect(onArchiveThread).toHaveBeenCalledWith("t1");
     fireEvent.click(getAllByLabelText("Star thread")[0]!);
     expect(onToggleStarThread).toHaveBeenCalledWith("t1", true);
+  });
+
+  it("SettingsView Jan-inspired AI providers, provider modal, and custom provider dialog work", async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+    mockIPC((cmd, args) => {
+      calls.push([cmd, args as Record<string, unknown>]);
+      switch (cmd) {
+        case "ai_status":
+          return {
+            enabled: true,
+            engine: "local",
+            tier: "mid",
+            tier_reason: "16 GB RAM, 8 cores → mid tier",
+            tier_is_override: false,
+            model_downloaded: true,
+            sidecar_running: false,
+            byo_configured: { openai: false, anthropic: true, xai: false },
+            model_disk_bytes: 397_000_000,
+          };
+        case "get_settings":
+          return {};
+        case "mcp_audit_tail":
+          return [];
+        case "diagnostics_hosts":
+          return [];
+        case "storage_usage":
+          return { db_bytes: 1024, models_bytes: 2048 };
+        case "diagnostics_logs":
+          return [];
+        default:
+          return null;
+      }
+    });
+
+    const { findByTestId, getByTestId } = render(
+      <ThemeProvider>
+        <SettingsView />
+      </ThemeProvider>,
+    );
+
+    expect(await findByTestId("local-ai-card")).toBeInTheDocument();
+    expect(await findByTestId("external-apis-card")).toBeInTheDocument();
+
+    // Open Anthropic provider settings modal via gear icon
+    fireEvent.click(await findByTestId("provider-settings-btn-anthropic"));
+    expect(await findByTestId("provider-detail-modal")).toBeInTheDocument();
+    expect(
+      (getByTestId("provider-baseurl-input") as HTMLInputElement).value,
+    ).toBe("https://api.anthropic.com");
+    expect(getByTestId("provider-model-claude-sonnet-4-5")).toBeInTheDocument();
+
+    // Open Add Custom Provider dialog and create a custom endpoint
+    fireEvent.click(getByTestId("add-provider-trigger"));
+    expect(await findByTestId("add-provider-dialog")).toBeInTheDocument();
+    fireEvent.change(getByTestId("provider-name-input"), {
+      target: { value: "DeepSeek Custom" },
+    });
+    fireEvent.change(getByTestId("provider-base-url-input"), {
+      target: { value: "https://api.deepseek.com/v1" },
+    });
+    fireEvent.change(getByTestId("provider-initial-model-input"), {
+      target: { value: "deepseek-chat" },
+    });
+    fireEvent.click(getByTestId("add-provider-submit"));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          ([c, a]) => c === "set_setting" && a?.key === "ai.providers_config",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("Composer pop-out button opens a standalone composer window", async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+    mockIPC((cmd, args) => {
+      calls.push([cmd, args as Record<string, unknown>]);
+      return null;
+    });
+
+    const onClose = vi.fn();
+    const { getByTestId } = render(
+      <Composer
+        target={{
+          accountId: 1,
+          to: [{ email: "alice@example.com" }],
+          subject: "Popout draft",
+          initialBody: "Hello from popout",
+        }}
+        onClose={onClose}
+        onSent={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByTestId("composer-popout"));
+    await waitFor(() =>
+      expect(calls.some(([c]) => c === "open_composer_window")).toBe(true),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("Reader empty state and thread quick-reply / toolbar buttons invoke callbacks directly", () => {

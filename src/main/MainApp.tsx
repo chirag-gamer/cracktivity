@@ -28,6 +28,26 @@ import {
 } from "./keymap";
 import { S } from "../shared/strings";
 
+const DEFAULT_RAIL_WIDTH = 252;
+const MIN_RAIL_WIDTH = 200;
+const MAX_RAIL_WIDTH = 360;
+
+const DEFAULT_LIST_WIDTH = 388;
+const MIN_LIST_WIDTH = 300;
+const MAX_LIST_WIDTH = 640;
+
+function readSavedWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = Number(localStorage.getItem(key));
+    if (Number.isFinite(raw) && raw >= min && raw <= max) {
+      return raw;
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return fallback;
+}
+
 export function MainApp() {
   const mail = useMail();
   const [search, setSearch] = useState<SearchRow[] | null>(null);
@@ -39,6 +59,44 @@ export function MainApp() {
   const [composer, setComposer] = useState<ComposerTarget | null>(null);
   const [onboarding, setOnboarding] = useState(false);
   const [keymap, setKeymap] = useState<KeymapScheme>(() => readKeymapScheme());
+  const [railWidth, setRailWidth] = useState<number>(() =>
+    readSavedWidth("cracktivity.pane.railWidth", DEFAULT_RAIL_WIDTH, MIN_RAIL_WIDTH, MAX_RAIL_WIDTH),
+  );
+  const [listWidth, setListWidth] = useState<number>(() =>
+    readSavedWidth("cracktivity.pane.listWidth", DEFAULT_LIST_WIDTH, MIN_LIST_WIDTH, MAX_LIST_WIDTH),
+  );
+  const [draggingSplitter, setDraggingSplitter] = useState<"rail" | "list" | null>(null);
+
+  const startResize = useCallback(
+    (which: "rail" | "list", startX: number) => {
+      const initialWidth = which === "rail" ? railWidth : listWidth;
+      setDraggingSplitter(which);
+      const onMove = (ev: MouseEvent) => {
+        const delta = ev.clientX - startX;
+        if (which === "rail") {
+          const clamped = Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, initialWidth + delta));
+          setRailWidth(clamped);
+          try {
+            localStorage.setItem("cracktivity.pane.railWidth", String(clamped));
+          } catch {}
+        } else {
+          const clamped = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, initialWidth + delta));
+          setListWidth(clamped);
+          try {
+            localStorage.setItem("cracktivity.pane.listWidth", String(clamped));
+          } catch {}
+        }
+      };
+      const onUp = () => {
+        setDraggingSplitter(null);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [railWidth, listWidth],
+  );
 
   // Keymap scheme (FR-30 AC): DB row is canonical, mirror seeds first paint;
   // in-window changes from Settings apply immediately (D-046).
@@ -357,7 +415,16 @@ export function MainApp() {
       : mail.accounts.reduce((sum, a) => sum + a.unread, 0);
 
   return (
-    <div className="app-shell" data-testid="main-app">
+    <div
+      className={`app-shell${draggingSplitter ? " is-resizing" : ""}`}
+      data-testid="main-app"
+      style={
+        {
+          "--rail-width": `${railWidth}px`,
+          "--list-width": `${listWidth}px`,
+        } as React.CSSProperties
+      }
+    >
       <AccountPane
         accounts={mail.accounts}
         statuses={mail.statuses}
@@ -367,6 +434,38 @@ export function MainApp() {
         onAddAccount={() => setAdding(true)}
         onOpenPalette={() => setPalette(true)}
         onOpenShortcuts={() => setOverlay(true)}
+      />
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize accounts sidebar"
+        aria-valuenow={railWidth}
+        aria-valuemin={MIN_RAIL_WIDTH}
+        aria-valuemax={MAX_RAIL_WIDTH}
+        tabIndex={0}
+        data-testid="resizer-rail"
+        className={`pane-resizer pane-resizer--rail${draggingSplitter === "rail" ? " is-dragging" : ""}`}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          startResize("rail", e.clientX);
+        }}
+        onDoubleClick={() => {
+          setRailWidth(DEFAULT_RAIL_WIDTH);
+          try {
+            localStorage.setItem("cracktivity.pane.railWidth", String(DEFAULT_RAIL_WIDTH));
+          } catch {}
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            const step = e.key === "ArrowRight" ? 16 : -16;
+            const next = Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, railWidth + step));
+            setRailWidth(next);
+            try {
+              localStorage.setItem("cracktivity.pane.railWidth", String(next));
+            } catch {}
+          }
+        }}
       />
       <div className="pane-middle">
         {mail.scope.kind !== "settings" && (
@@ -419,6 +518,38 @@ export function MainApp() {
           />
         )}
       </div>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize message list"
+        aria-valuenow={listWidth}
+        aria-valuemin={MIN_LIST_WIDTH}
+        aria-valuemax={MAX_LIST_WIDTH}
+        tabIndex={0}
+        data-testid="resizer-list"
+        className={`pane-resizer pane-resizer--list${draggingSplitter === "list" ? " is-dragging" : ""}`}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          startResize("list", e.clientX);
+        }}
+        onDoubleClick={() => {
+          setListWidth(DEFAULT_LIST_WIDTH);
+          try {
+            localStorage.setItem("cracktivity.pane.listWidth", String(DEFAULT_LIST_WIDTH));
+          } catch {}
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            const step = e.key === "ArrowRight" ? 16 : -16;
+            const next = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, listWidth + step));
+            setListWidth(next);
+            try {
+              localStorage.setItem("cracktivity.pane.listWidth", String(next));
+            } catch {}
+          }
+        }}
+      />
       <Reader
         messages={mail.messages}
         onMarkRead={onMarkRead}
@@ -439,6 +570,12 @@ export function MainApp() {
         open={palette}
         onClose={() => setPalette(false)}
         commands={commands}
+        onPickSearchHit={(hit) => {
+          if (mail.scope.kind === "settings") {
+            mail.setScope({ kind: "unified" });
+          }
+          mail.select(hit.thrid ?? `__msg-${hit.message_id}`);
+        }}
       />
       <AddAccountDialog
         open={adding}

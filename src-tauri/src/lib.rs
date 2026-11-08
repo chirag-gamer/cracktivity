@@ -60,7 +60,8 @@ pub fn run() {
                 if e2e_seed {
                     app::seed_demo(&st);
                 } else {
-                    app::purge_demo(&st);
+                    app::purge_demo(&st)
+                        .map_err(|e| format!("failed to purge demo account: {e}"))?;
                 }
             }
 
@@ -144,6 +145,8 @@ pub fn run() {
             app::delete_draft,
             app::send_draft,
             app::open_mailto,
+            app::open_external_url,
+            app::open_composer_window,
             app::get_settings,
             app::set_setting,
             app::ai_status,
@@ -151,6 +154,7 @@ pub fn run() {
             app::ai_download_model,
             app::ai_delete_model,
             app::ai_set_key,
+            app::ai_fetch_models,
             app::ai_chatgpt_connect,
             app::ai_chatgpt_disconnect,
             app::ai_summarize,

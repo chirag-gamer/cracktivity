@@ -107,6 +107,9 @@ export const ipc = {
   undoBulkArchive: (undo: ArchivedRef[]) =>
     invoke<void>("undo_bulk_archive", { undo }),
   openMailto: (mailto: string) => invoke<void>("open_mailto", { mailto }),
+  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
+  openComposerWindow: (stateJson: string) =>
+    invoke<void>("open_composer_window", { stateJson }),
 
   // -- Phase 4: compose/drafts (FR-17/18)
   saveDraft: (d: {
@@ -149,6 +152,18 @@ export const ipc = {
   aiDeleteModel: () => invoke<void>("ai_delete_model"),
   aiSetKey: (kind: string, key: string | null) =>
     invoke<void>("ai_set_key", { kind, key: key ?? null }),
+  aiFetchModels: (
+    kind: string,
+    baseUrl: string,
+    apiKey?: string | null,
+    apiFormat?: "openai" | "anthropic" | null,
+  ) =>
+    invoke<string[]>("ai_fetch_models", {
+      kind,
+      baseUrl,
+      apiKey: apiKey ?? null,
+      apiFormat: apiFormat ?? null,
+    }),
   aiChatgptConnect: () => invoke<string>("ai_chatgpt_connect"),
   aiChatgptDisconnect: () => invoke<void>("ai_chatgpt_disconnect"),
   aiStream: (

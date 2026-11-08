@@ -268,6 +268,14 @@ impl OpenAiCompat {
         }
     }
 
+    pub fn custom(base_url: &str, key: &str, model: &str) -> Self {
+        OpenAiCompat {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key: secrecy::SecretString::from(key.to_string()),
+            model: model.to_string(),
+        }
+    }
+
     fn request_body(&self, msgs: &[Msg]) -> String {
         let messages: Vec<serde_json::Value> = msgs
             .iter()
@@ -282,6 +290,93 @@ impl OpenAiCompat {
     }
 }
 
+/// Normalizes a provider base URL (`https://api.openai.com`,
+/// `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`,
+/// `https://generativelanguage.googleapis.com/v1beta/openai`, etc.) into its
+/// chat completions endpoint.
+pub fn resolve_completions_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else if trimmed.ends_with("/v1")
+        || trimmed.ends_with("/openai")
+        || trimmed.ends_with("/v1beta")
+        || trimmed.ends_with("/api/v3")
+    {
+        format!("{trimmed}/chat/completions")
+    } else {
+        format!("{trimmed}/v1/chat/completions")
+    }
+}
+
+/// Normalizes a provider base URL into its `/models` discovery endpoint.
+pub fn resolve_models_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if let Some(prefix) = trimmed.strip_suffix("/chat/completions") {
+        format!("{prefix}/models")
+    } else if trimmed.ends_with("/models") {
+        trimmed.to_string()
+    } else if trimmed.ends_with("/v1")
+        || trimmed.ends_with("/openai")
+        || trimmed.ends_with("/v1beta")
+        || trimmed.ends_with("/api/v3")
+    {
+        format!("{trimmed}/models")
+    } else {
+        format!("{trimmed}/v1/models")
+    }
+}
+
+/// Queries an OpenAI-compatible `/models` endpoint (or Anthropic `/v1/models`)
+/// to test connectivity and discover available model IDs.
+pub fn fetch_provider_models(
+    base_url: &str,
+    api_key: &str,
+    is_anthropic: bool,
+) -> Result<Vec<String>, ChatError> {
+    let url = resolve_models_url(base_url);
+    log_host(&url);
+    let config = ureq::config::Config::builder()
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let mut req = agent.get(&url).header("Accept", "application/json");
+    if is_anthropic {
+        if !api_key.trim().is_empty() {
+            req = req.header("x-api-key", api_key.trim());
+        }
+        req = req.header("anthropic-version", "2023-06-01");
+    } else if !api_key.trim().is_empty() {
+        req = req.header("Authorization", &format!("Bearer {}", api_key.trim()));
+    }
+    let response = req.call().map_err(|e| {
+        let msg = match e {
+            ureq::Error::StatusCode(code) => format!("HTTP {code} from {url}"),
+            other => format!("connection failed ({url}): {other}"),
+        };
+        crate::platform::applog::record("error", format!("model discovery failed: {msg}"));
+        ChatError(msg)
+    })?;
+    let body_str = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| ChatError(format!("read models response: {e}")))?;
+    let v: serde_json::Value = serde_json::from_str(&body_str)
+        .map_err(|e| ChatError(format!("invalid JSON from {url}: {e}")))?;
+    let mut models = Vec::new();
+    if let Some(arr) = v["data"].as_array().or_else(|| v["models"].as_array()) {
+        for item in arr {
+            if let Some(id) = item["id"].as_str().or_else(|| item["name"].as_str()) {
+                let cleaned = id.strip_prefix("models/").unwrap_or(id);
+                if !cleaned.is_empty() {
+                    models.push(cleaned.to_string());
+                }
+            }
+        }
+    }
+    Ok(models)
+}
+
 impl ChatEngine for OpenAiCompat {
     fn stream_chat(
         &self,
@@ -292,19 +387,25 @@ impl ChatEngine for OpenAiCompat {
             .timeout_global(Some(std::time::Duration::from_secs(300)))
             .build();
         let agent = ureq::Agent::new_with_config(config);
+        let url = resolve_completions_url(&self.base_url);
         log_host(&self.base_url);
-        let response = agent
-            .post(&format!("{}/v1/chat/completions", self.base_url))
-            .header(
+        let mut req = agent.post(&url).header("Content-Type", "application/json");
+        if !self.api_key.expose_secret().trim().is_empty() {
+            req = req.header(
                 "Authorization",
                 &format!("Bearer {}", self.api_key.expose_secret()),
-            )
-            .header("Content-Type", "application/json")
-            .send(self.request_body(msgs))
-            .map_err(|e| match e {
-                ureq::Error::StatusCode(code) => ChatError(format!("API error {code}")),
-                other => ChatError(format!("connection failed: {other}")),
-            })?;
+            );
+        }
+        let response = req.send(self.request_body(msgs)).map_err(|e| {
+            let msg = match e {
+                ureq::Error::StatusCode(code) => {
+                    format!("API error {code} ({url}, model={})", self.model)
+                }
+                other => format!("connection failed ({url}): {other}"),
+            };
+            crate::platform::applog::record("error", format!("AI chat error: {msg}"));
+            ChatError(msg)
+        })?;
         let reader = response.into_body().into_reader();
         parse_openai_sse(reader, on_delta)
     }
@@ -319,16 +420,37 @@ pub fn parse_openai_sse(
     let mut full = String::new();
     for line in BufReader::new(reader).lines() {
         let line = line.map_err(|e| ChatError(format!("stream read: {e}")))?;
-        let Some(data) = line.strip_prefix("data: ") else {
+        let trimmed = line.trim();
+        let Some(data) = trimmed.strip_prefix("data:").map(str::trim) else {
+            // Handle non-SSE JSON error payload returned with 200 status by some proxies
+            if trimmed.starts_with('{') {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    if let Some(err_msg) = v["error"]["message"]
+                        .as_str()
+                        .or_else(|| v["error"].as_str())
+                    {
+                        return Err(ChatError(format!("API error: {err_msg}")));
+                    }
+                }
+            }
             continue;
         };
-        if data.trim() == "[DONE]" {
+        if data == "[DONE]" {
             break;
         }
         let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
             continue;
         };
-        if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
+        if let Some(err_msg) = v["error"]["message"]
+            .as_str()
+            .or_else(|| v["error"].as_str())
+        {
+            return Err(ChatError(format!("API stream error: {err_msg}")));
+        }
+        if let Some(delta) = v["choices"][0]["delta"]["content"]
+            .as_str()
+            .or_else(|| v["choices"][0]["message"]["content"].as_str())
+        {
             if !delta.is_empty() {
                 on_delta(delta);
                 full.push_str(delta);
@@ -342,15 +464,39 @@ pub fn parse_openai_sse(
 /// keys). Events carry `content_block_delta` with `delta.text`.
 #[derive(Clone)]
 pub struct Anthropic {
+    pub base_url: String,
     pub api_key: secrecy::SecretString,
     pub model: String,
     /// anthropic-version date (the current stable header value).
     pub version: &'static str,
 }
 
+pub fn resolve_anthropic_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() || trimmed == "https://api.anthropic.com" {
+        ANTHROPIC_URL.to_string()
+    } else if trimmed.ends_with("/v1/messages") || trimmed.ends_with("/messages") {
+        trimmed.to_string()
+    } else if trimmed.ends_with("/v1") {
+        format!("{trimmed}/messages")
+    } else {
+        format!("{trimmed}/v1/messages")
+    }
+}
+
 impl Anthropic {
     pub fn new(key: &str, model: &str) -> Self {
         Anthropic {
+            base_url: ANTHROPIC_URL.into(),
+            api_key: secrecy::SecretString::from(key.to_string()),
+            model: model.to_string(),
+            version: "2023-06-01",
+        }
+    }
+
+    pub fn with_base_url(base_url: &str, key: &str, model: &str) -> Self {
+        Anthropic {
+            base_url: resolve_anthropic_url(base_url),
             api_key: secrecy::SecretString::from(key.to_string()),
             model: model.to_string(),
             version: "2023-06-01",
@@ -391,16 +537,23 @@ impl ChatEngine for Anthropic {
             .timeout_global(Some(std::time::Duration::from_secs(300)))
             .build();
         let agent = ureq::Agent::new_with_config(config);
-        log_host(ANTHROPIC_URL);
+        let url = resolve_anthropic_url(&self.base_url);
+        log_host(&url);
         let response = agent
-            .post(ANTHROPIC_URL)
+            .post(&url)
             .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", self.version)
             .header("Content-Type", "application/json")
             .send(self.request_body(msgs))
-            .map_err(|e| match e {
-                ureq::Error::StatusCode(code) => ChatError(format!("API error {code}")),
-                other => ChatError(format!("connection failed: {other}")),
+            .map_err(|e| {
+                let msg = match e {
+                    ureq::Error::StatusCode(code) => {
+                        format!("API error {code} ({url}, model={})", self.model)
+                    }
+                    other => format!("connection failed ({url}): {other}"),
+                };
+                crate::platform::applog::record("error", format!("Anthropic AI error: {msg}"));
+                ChatError(msg)
             })?;
         let reader = response.into_body().into_reader();
         parse_anthropic_sse(reader, on_delta)
@@ -417,12 +570,18 @@ pub fn parse_anthropic_sse(
     let mut full = String::new();
     for line in BufReader::new(reader).lines() {
         let line = line.map_err(|e| ChatError(format!("stream read: {e}")))?;
-        let Some(data) = line.strip_prefix("data: ") else {
+        let Some(data) = line.trim().strip_prefix("data:").map(str::trim) else {
             continue;
         };
         let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
             continue;
         };
+        if v["type"] == "error" {
+            let msg = v["error"]["message"]
+                .as_str()
+                .unwrap_or("Anthropic stream error");
+            return Err(ChatError(msg.to_string()));
+        }
         if v["type"] == "content_block_delta" {
             if let Some(text) = v["delta"]["text"].as_str() {
                 if !text.is_empty() {
@@ -505,5 +664,41 @@ mod tests {
         assert_eq!(body["model"], "gpt-4o-mini");
         assert_eq!(body["stream"], true);
         assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn custom_endpoint_urls_normalize_cleanly() {
+        assert_eq!(
+            resolve_completions_url("https://api.openai.com"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            resolve_completions_url("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            resolve_completions_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(
+            resolve_completions_url("https://generativelanguage.googleapis.com/v1beta/openai"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
+        assert_eq!(
+            resolve_models_url("https://api.groq.com/openai/v1"),
+            "https://api.groq.com/openai/v1/models"
+        );
+        assert_eq!(
+            resolve_anthropic_url("https://api.anthropic.com"),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn openai_sse_surfaces_error_frames() {
+        let err_stream = b"data: {\"error\":{\"message\":\"Invalid API key provided\"}}\n\n";
+        let res = parse_openai_sse(&err_stream[..], &mut |_| {});
+        assert!(res.is_err());
+        assert!(res.unwrap_err().0.contains("Invalid API key"));
     }
 }

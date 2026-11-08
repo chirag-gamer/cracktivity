@@ -6,8 +6,8 @@
  * disabled), deterministic accessible avatars, semantic badges, shortcut chips,
  * structured empty/onboarding cards, and action toasts.
  */
-import React from "react";
-import { X } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, X } from "lucide-react";
 
 export type ButtonVariant =
   | "primary"
@@ -379,5 +379,207 @@ export function ToastBanner({
         </IconButton>
       )}
     </div>
+  );
+}
+
+export interface UiSelectOption {
+  value: string;
+  label: string;
+  description?: string;
+  badge?: string;
+  icon?: React.ReactNode;
+}
+
+/**
+ * Custom accessible dropdown menu replacing dated Win32 native `<select>`
+ * popups while keeping a synchronized visually-hidden `<select>` so label
+ * associations (`htmlFor` / `getByLabelText`) and `fireEvent.change` tests
+ * work identically.
+ */
+export function UiSelect({
+  id,
+  testId,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  ariaLabel,
+  className = "",
+}: {
+  id?: string;
+  testId?: string;
+  value: string;
+  options: ReadonlyArray<UiSelectOption>;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const current =
+    options.find((o) => o.value === value) ??
+    options[0] ?? { value, label: value };
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const onTriggerKeyDown = (e: React.KeyboardEvent) => {
+    if (disabled) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+      const idx = options.findIndex((o) => o.value === value);
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      const next =
+        options[(idx + delta + options.length) % Math.max(1, options.length)];
+      if (next) onChange(next.value);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setOpen((v) => !v);
+    }
+  };
+
+  return (
+    <div
+      ref={wrapRef}
+      className={`ui-select${open ? " is-open" : ""}${disabled ? " is-disabled" : ""} ${className}`.trim()}
+    >
+      <select
+        id={id}
+        data-testid={testId}
+        aria-label={ariaLabel}
+        className="ui-select__native-sr"
+        value={value}
+        disabled={disabled}
+        tabIndex={-1}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        data-testid={testId ? `${testId}-trigger` : undefined}
+        className="ui-select__trigger"
+        onClick={() => !disabled && setOpen((v) => !v)}
+        onKeyDown={onTriggerKeyDown}
+      >
+        <span className="ui-select__trigger-main">
+          {current.icon && (
+            <span className="ui-select__trigger-icon">{current.icon}</span>
+          )}
+          <span className="ui-select__trigger-label">{current.label}</span>
+          {current.badge && (
+            <span className="ui-select__trigger-badge">{current.badge}</span>
+          )}
+        </span>
+        <ChevronDown
+          size={13}
+          className={`ui-select__chevron${open ? " is-open" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="ui-select__popover" role="listbox">
+          {options.map((o) => {
+            const active = o.value === value;
+            return (
+              <button
+                type="button"
+                key={o.value}
+                role="option"
+                aria-selected={active}
+                data-testid={testId ? `${testId}-opt-${o.value}` : undefined}
+                className={`ui-select__option${active ? " is-selected" : ""}`}
+                onClick={() => {
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="ui-select__opt-body">
+                  {o.icon && <span className="ui-select__opt-icon">{o.icon}</span>}
+                  <span className="ui-select__opt-text">
+                    <span className="ui-select__opt-label">{o.label}</span>
+                    {o.description && (
+                      <span className="ui-select__opt-desc">{o.description}</span>
+                    )}
+                  </span>
+                </span>
+                <span className="ui-select__opt-right">
+                  {o.badge && (
+                    <span className="ui-select__opt-badge">{o.badge}</span>
+                  )}
+                  {active && <Check size={13} className="ui-select__check" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Jan-inspired pill slide switch (`role="switch"`) with smooth thumb transition.
+ */
+export function UiSwitch({
+  checked,
+  onChange,
+  disabled = false,
+  label,
+  testId,
+  className = "",
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  label?: string;
+  testId?: string;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      data-testid={testId}
+      className={`ui-switch${checked ? " is-checked" : ""}${disabled ? " is-disabled" : ""} ${className}`.trim()}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onChange(!checked);
+      }}
+    >
+      <span className="ui-switch__thumb" />
+    </button>
   );
 }
