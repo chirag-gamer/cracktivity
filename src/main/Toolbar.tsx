@@ -2,12 +2,7 @@
  * Toolbar: filter tabs (Important/Other/All, FR-11), search box (FR-9 local
  * FTS5), add-account entry (FR-1) and the offline banner (FR-5).
  */
-import { useState } from "react";
-import {
-  MessageBar,
-  MessageBarBody,
-  MessageBarTitle,
-} from "@fluentui/react-components";
+import { useRef, useState } from "react";
 import {
   CircleAlert,
   Plus,
@@ -54,11 +49,13 @@ export function Toolbar({
   onSyncNow,
 }: ToolbarProps) {
   const [q, setQ] = useState("");
+  const searchSeqRef = useRef(0);
   const offline = statuses.some((s) => s.state === "offline");
   const authTrouble = statuses.some((s) => s.state === "auth_failed");
   const syncing = statuses.some((s) => s.state === "syncing");
 
   const run = async (query: string) => {
+    const seq = ++searchSeqRef.current;
     setQ(query);
     if (!query.trim()) {
       onSearch(null);
@@ -66,9 +63,14 @@ export function Toolbar({
     }
     try {
       const { ipc } = await import("../shared/ipc");
-      onSearch(await ipc.searchMessages(query, alsoServer));
+      const results = await ipc.searchMessages(query, alsoServer);
+      if (seq === searchSeqRef.current) {
+        onSearch(results);
+      }
     } catch {
-      onSearch([]);
+      if (seq === searchSeqRef.current) {
+        onSearch([]);
+      }
     }
   };
 
@@ -170,24 +172,22 @@ export function Toolbar({
       </div>
 
       {(offline || authTrouble) && (
-        <MessageBar
-          intent={authTrouble ? "error" : "warning"}
+        <div
+          role="status"
           data-testid="offline-banner"
-          className="toolbar-banner"
+          className={`toolbar-banner ${authTrouble ? "toolbar-banner--error" : "toolbar-banner--warning"}`}
         >
-          <MessageBarBody>
-            <MessageBarTitle
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
-            >
-              {authTrouble ? (
-                <CircleAlert size={14} />
-              ) : (
-                <TriangleAlert size={14} />
-              )}
-              <span>{authTrouble ? S.authBanner : S.offlineBanner}</span>
-            </MessageBarTitle>
-          </MessageBarBody>
-        </MessageBar>
+          <span className="toolbar-banner__icon" aria-hidden="true">
+            {authTrouble ? (
+              <CircleAlert size={14} />
+            ) : (
+              <TriangleAlert size={14} />
+            )}
+          </span>
+          <span className="toolbar-banner__text">
+            {authTrouble ? S.authBanner : S.offlineBanner}
+          </span>
+        </div>
       )}
     </div>
   );

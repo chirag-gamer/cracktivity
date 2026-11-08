@@ -14,10 +14,12 @@
       {
         "label": "main",
         "title": "cracktivity",
-        "width": 1200,
-        "height": 800,
+        "width": 1280,
+        "height": 840,
         "minWidth": 720,
         "minHeight": 480,
+        "maximized": true,
+        "resizable": true,
         "visible": true
       }
     ],

@@ -70,6 +70,7 @@ export function AddAccountDialog({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [host, setHost] = useState("");
+  const [smtpHost, setSmtpHost] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const preset = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
@@ -78,17 +79,24 @@ export function AddAccountDialog({
     setBusy(true);
     setError(null);
     try {
+      const trimmedImap = host.trim();
+      const trimmedSmtp =
+        smtpHost.trim() ||
+        (trimmedImap ? trimmedImap.replace(/^imap\./i, "smtp.") : "");
       await ipc.addAccount(
         provider,
         email.trim(),
         password,
-        provider === "generic" ? host.trim() : undefined,
+        provider === "generic" ? trimmedImap : undefined,
+        undefined,
+        provider === "generic" ? trimmedSmtp : undefined,
       );
       onAdded();
       onClose();
       setEmail("");
       setPassword("");
       setHost("");
+      setSmtpHost("");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -184,14 +192,28 @@ export function AddAccountDialog({
             </Field>
 
             {provider === "generic" && (
-              <Field label={S.imapHost}>
-                <Input
-                  value={host}
-                  placeholder="imap.example.com"
-                  onChange={(_, d) => setHost(d.value)}
-                  data-testid="account-host"
-                />
-              </Field>
+              <>
+                <Field label={S.imapHost}>
+                  <Input
+                    value={host}
+                    placeholder="imap.example.com"
+                    onChange={(_, d) => setHost(d.value)}
+                    data-testid="account-host"
+                  />
+                </Field>
+                <Field label="SMTP server host">
+                  <Input
+                    value={smtpHost}
+                    placeholder={
+                      host.trim()
+                        ? host.trim().replace(/^imap\./i, "smtp.")
+                        : "smtp.example.com"
+                    }
+                    onChange={(_, d) => setSmtpHost(d.value)}
+                    data-testid="account-smtp-host"
+                  />
+                </Field>
+              </>
             )}
 
             {error && (

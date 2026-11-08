@@ -150,6 +150,8 @@ describe("Icon System & Stroke Consistency (ThemeProvider + LucideProvider)", ()
     const svgs = Array.from(container.querySelectorAll("svg"));
     expect(svgs.length).toBeGreaterThan(0);
     for (const svg of svgs) {
+      expect(svg.getAttribute("width")).toBe("15");
+      expect(svg.getAttribute("height")).toBe("15");
       expect(svg.getAttribute("stroke-width")).toBe("1.75");
       // Outline icons in AccountPane must never have fill="currentColor"
       expect(svg.getAttribute("fill")).not.toBe("currentColor");
@@ -161,6 +163,14 @@ describe("Onboarding Wizard & First-Run Experience", () => {
   it("walks through AI -> Appearance (Dark/Light/System) -> Account steps with Back navigation", async () => {
     const onFinish = vi.fn();
     const onAddAccount = vi.fn();
+    let downloadCalls = 0;
+    mockIPC((cmd) => {
+      if (cmd === "ai_download_model") {
+        downloadCalls += 1;
+      }
+      return null;
+    });
+
     const { getByTestId, getByText } = render(
       <ThemeProvider>
         <OnboardingDialog
@@ -176,13 +186,35 @@ describe("Onboarding Wizard & First-Run Experience", () => {
     await waitFor(() =>
       expect(getByTestId("onboarding-theme-dark")).toBeInTheDocument(),
     );
+    expect(downloadCalls).toBe(1);
     expect(getByTestId("onboarding-theme-light")).toBeInTheDocument();
     expect(getByTestId("onboarding-theme-system")).toBeInTheDocument();
+
+    // Exercise Back from Step 2 -> Step 1, and ensure accepting again does not re-download
+    fireEvent.click(getByText("Back"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-accept")).toBeInTheDocument(),
+    );
+    fireEvent.click(getByTestId("onboarding-accept"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-theme-dark")).toBeInTheDocument(),
+    );
+    expect(downloadCalls).toBe(1);
 
     fireEvent.click(getByTestId("onboarding-theme-dark"));
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
 
     // Step 2 -> Step 3
+    fireEvent.click(getByText("Continue"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-add-account")).toBeInTheDocument(),
+    );
+
+    // Exercise Back from Step 3 -> Step 2 -> Step 3
+    fireEvent.click(getByText("Back"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-theme-dark")).toBeInTheDocument(),
+    );
     fireEvent.click(getByText("Continue"));
     await waitFor(() =>
       expect(getByTestId("onboarding-add-account")).toBeInTheDocument(),
@@ -202,8 +234,10 @@ describe("Onboarding Wizard & First-Run Experience", () => {
       </ThemeProvider>,
     );
     expect(queryByTestId("account-host")).not.toBeInTheDocument();
+    expect(queryByTestId("account-smtp-host")).not.toBeInTheDocument();
     fireEvent.click(getByText("Other (IMAP)"));
     expect(queryByTestId("account-host")).toBeInTheDocument();
+    expect(queryByTestId("account-smtp-host")).toBeInTheDocument();
   });
 
   it("MessageList first-run empty state triggers onAddAccount and row hover actions work", () => {
@@ -247,9 +281,10 @@ describe("Onboarding Wizard & First-Run Experience", () => {
     const onCompose = vi.fn();
     const onReply = vi.fn();
     const onArchiveThread = vi.fn();
+    const onToggleStarThread = vi.fn();
     const onDraftReply = vi.fn();
 
-    const { getByText, rerender } = render(
+    const { getByText, getByTitle, rerender } = render(
       <Reader
         messages={[]}
         onMarkRead={() => {}}
@@ -272,8 +307,15 @@ describe("Onboarding Wizard & First-Run Experience", () => {
         onDraftReply={onDraftReply}
         onReply={onReply}
         onArchiveThread={onArchiveThread}
+        onToggleStarThread={onToggleStarThread}
       />,
     );
+
+    fireEvent.click(getByTitle("Archive thread (e)"));
+    expect(onArchiveThread).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByTitle("Star thread (s)"));
+    expect(onToggleStarThread).toHaveBeenCalledTimes(1);
 
     fireEvent.click(getByText("Reply"));
     expect(onReply).toHaveBeenCalledTimes(1);

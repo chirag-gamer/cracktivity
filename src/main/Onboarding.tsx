@@ -44,6 +44,7 @@ export function OnboardingDialog({
 }: OnboardingProps) {
   const [enabled, setEnabled] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [modelDownloaded, setModelDownloaded] = useState(false);
   const [step, setStep] = useState<Step>("ai");
   const { choice, setChoice } = useThemeChoice();
 
@@ -51,10 +52,19 @@ export function OnboardingDialog({
 
   const accept = () => {
     if (enabled) {
+      if (modelDownloaded) {
+        ipc.aiSetEnabled(true).catch(() => {});
+        ipc.setSetting("onboarding.completed", true).catch(() => {});
+        setStep("look");
+        return;
+      }
       setDownloading(true);
       ipc
         .aiSetEnabled(true)
         .then(() => ipc.aiDownloadModel(() => {}, () => {}))
+        .then(() => {
+          setModelDownloaded(true);
+        })
         .catch(() => {})
         .finally(() => {
           ipc.setSetting("onboarding.completed", true).catch(() => {});
@@ -140,7 +150,7 @@ export function OnboardingDialog({
                 <HardDrive size={15} className="ob-feature-icon" />
                 <div>
                   <strong>Compact Footprint</strong>
-                  <span>Fine-tuned Qwen3-0.6B (~397 MB GGUF, SHA-256 pinned)</span>
+                  <span>Hardware-matched local model with SHA-256 verification</span>
                 </div>
               </div>
               <div className="ob-feature-item">

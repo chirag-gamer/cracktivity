@@ -12,7 +12,6 @@ import {
   Mail,
   Plus,
   RefreshCw,
-  Sparkles,
   Star,
 } from "lucide-react";
 import { S } from "../shared/strings";
@@ -20,7 +19,7 @@ import { Avatar, UiButton } from "../shared/ui";
 import { relativeTime, senderName } from "../shared/format";
 import type { ThreadRow } from "../shared/types";
 
-export const ROW_HEIGHT = 80;
+export const ROW_HEIGHT = 76;
 
 export interface MessageListProps {
   threads: ThreadRow[];
@@ -71,9 +70,7 @@ export function MessageList({
             <Mail size={20} />
           </div>
           <div className="empty-title">{S.loading}</div>
-          <div className="empty-subtitle">
-            Reading encrypted local cache…
-          </div>
+          <div className="empty-subtitle">Reading local mail cache…</div>
         </div>
       </div>
     );
@@ -89,7 +86,7 @@ export function MessageList({
           <div className="empty-title">{S.noMail}</div>
           <div className="empty-subtitle">
             {!hasAccounts
-              ? "Connect your Gmail, Outlook, iCloud, or custom IMAP account to start syncing messages locally."
+              ? "Connect your Gmail, iCloud, Zoho, Yahoo, or custom IMAP account to start syncing messages."
               : "You are all caught up in this view. Switch filters or sync to check for new messages."}
           </div>
           <div className="empty-actions">
@@ -163,12 +160,7 @@ export function MessageList({
           return (
             <div
               key={t.thrid}
-              role="option"
-              id={`thread-opt-${t.thrid}`}
-              aria-selected={selected}
-              data-testid="thread-row"
-              data-thrid={t.thrid}
-              className={`row${unread ? " unread" : ""}${selected ? " selected" : ""}`}
+              className={`row-item-wrap${selected ? " is-selected" : ""}${unread ? " is-unread" : ""}`}
               style={{
                 position: "absolute",
                 top: 0,
@@ -177,99 +169,105 @@ export function MessageList({
                 height: vi.size,
                 transform: `translateY(${vi.start}px)`,
               }}
-              onClick={() => onSelect(t.thrid)}
             >
-              <Avatar
-                name={name}
-                seed={t.from?.email ?? name}
-                size="sm"
-                className="row-avatar-col"
-              />
-
-              <div className="row-body-col">
-                <div className="row-main">
-                  {unread && (
-                    <span className="row-unread-dot" title="Unread" />
-                  )}
-                  <span className={`row-sender${unread ? " strong" : ""}`}>
-                    {name}
-                  </span>
-                  {t.msg_count > 1 && (
-                    <span
-                      className="row-count-pill"
-                      title={`${t.msg_count} messages in thread`}
-                    >
-                      {t.msg_count}
-                    </span>
-                  )}
-                  <span className="row-meta-right">
-                    {t.starred && (
-                      <span className="row-star starred" aria-label="starred">
-                        <Star size={12} fill="currentColor" />
-                      </span>
-                    )}
-                    <span className="row-time">
-                      {relativeTime(t.last_date)}
-                    </span>
-                  </span>
-
-                  {(onArchiveThread || onToggleStarThread) && (
-                    <div
-                      className="row-hover-actions"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {onToggleStarThread && (
-                        <button
-                          type="button"
-                          className={`row-quick-btn${t.starred ? " is-starred" : ""}`}
-                          title={t.starred ? "Unstar (S)" : "Star (S)"}
-                          aria-label={t.starred ? "Unstar thread" : "Star thread"}
-                          onClick={() => onToggleStarThread(t.thrid, !t.starred)}
-                        >
-                          <Star
-                            size={12}
-                            fill={t.starred ? "currentColor" : "none"}
-                          />
-                        </button>
-                      )}
-                      {onArchiveThread && (
-                        <button
-                          type="button"
-                          className="row-quick-btn"
-                          title="Archive (E)"
-                          aria-label="Archive thread"
-                          onClick={() => onArchiveThread(t.thrid)}
-                        >
-                          <Archive size={12} />
-                        </button>
-                      )}
-                    </div>
-                  )}
+              <div
+                role="option"
+                id={`thread-opt-${t.thrid}`}
+                aria-selected={selected}
+                data-testid="thread-row"
+                data-thrid={t.thrid}
+                className={`row${unread ? " unread" : ""}${selected ? " selected" : ""}`}
+                onClick={() => onSelect(t.thrid)}
+              >
+                <div className="row-lead-col">
+                  <span
+                    className={`row-unread-dot${unread ? " is-visible" : ""}`}
+                    aria-hidden="true"
+                  />
+                  <Avatar
+                    name={name}
+                    seed={t.from?.email ?? name}
+                    size="sm"
+                    className="row-avatar-col"
+                  />
                 </div>
 
-                <div className={`row-subject${unread ? " strong" : ""}`}>
-                  {t.subject || "(no subject)"}
-                </div>
+                <div className="row-body-col">
+                  <div className="row-main">
+                    <span className={`row-sender${unread ? " strong" : ""}`}>
+                      {name}
+                    </span>
+                    {t.msg_count > 1 && (
+                      <span
+                        className="row-count-pill"
+                        title={`${t.msg_count} messages in thread`}
+                      >
+                        {t.msg_count}
+                      </span>
+                    )}
+                    <span className="row-meta-right">
+                      {t.starred && (
+                        <span className="row-star starred" aria-label="starred">
+                          <Star size={12} fill="currentColor" />
+                        </span>
+                      )}
+                      <span className="row-time">
+                        {relativeTime(t.last_date)}
+                      </span>
+                    </span>
+                  </div>
 
-                <div className="row-bottom">
-                  <span className="row-snippet">
-                    {t.snippet || "No preview text"}
-                  </span>
-                  <div className="row-badges">
-                    {t.importance === "important" && (
-                      <span className="row-tag-pill row-tag-pill--ai">
-                        <Sparkles size={10} />
-                        <span>Important</span>
-                      </span>
-                    )}
-                    {unread && t.unread_count > 1 && (
-                      <span className="row-unread-pill">
-                        {t.unread_count} new
-                      </span>
-                    )}
+                  <div className={`row-subject${unread ? " strong" : ""}`}>
+                    {t.subject || "(no subject)"}
+                  </div>
+
+                  <div className="row-bottom">
+                    <span className="row-snippet">
+                      {t.snippet || "No preview text"}
+                    </span>
                   </div>
                 </div>
               </div>
+
+              {(onArchiveThread || onToggleStarThread) && (
+                <div
+                  className="row-hover-actions"
+                  role="group"
+                  aria-label={`Quick actions for ${t.subject || name}`}
+                >
+                  {onToggleStarThread && (
+                    <button
+                      type="button"
+                      className={`row-quick-btn${t.starred ? " is-starred" : ""}`}
+                      title={t.starred ? "Unstar (S)" : "Star (S)"}
+                      aria-label={t.starred ? "Unstar thread" : "Star thread"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleStarThread(t.thrid, !t.starred);
+                      }}
+                    >
+                      <Star
+                        size={12}
+                        fill={t.starred ? "currentColor" : "none"}
+                      />
+                    </button>
+                  )}
+                  {onArchiveThread && (
+                    <button
+                      type="button"
+                      className="row-quick-btn"
+                      title="Archive (E)"
+                      aria-label="Archive thread"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onArchiveThread(t.thrid);
+                      }}
+                    >
+                      <Archive size={12} />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

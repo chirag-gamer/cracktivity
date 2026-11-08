@@ -13,7 +13,6 @@ import {
   History,
   KeyRound,
   Settings,
-  ShieldCheck,
 } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
@@ -116,9 +115,6 @@ export function SettingsView() {
             network/storage diagnostics.
           </p>
         </div>
-        <BadgePill variant="success" size="sm" icon={<ShieldCheck size={12} />}>
-          Zero Telemetry Active
-        </BadgePill>
       </header>
 
       <section aria-label={S.settingsAi}>

@@ -2051,6 +2051,25 @@ pub fn seed_demo(store: &Store) -> i64 {
     account
 }
 
+/// Removes any synthetic `--e2e-seed` demo account (`credential_ref = 'cracktivity.e2e.seed'`)
+/// and its cascaded folders/messages/threads so normal production runs never show
+/// stock demo data even if `--e2e-seed` was previously run against the profile.
+pub fn purge_demo(store: &Store) {
+    let conn = store.conn();
+    let deleted = conn
+        .execute(
+            "DELETE FROM accounts WHERE credential_ref = 'cracktivity.e2e.seed'",
+            [],
+        )
+        .unwrap_or(0);
+    if deleted > 0 {
+        let _ = conn.execute(
+            "DELETE FROM contacts WHERE email IN ('priya@example.org', 'demo@example.com', 'news@rust.example', 'receipts@grocer.example', 'statements@bank.example', 'no-reply@service.example')",
+            [],
+        );
+    }
+}
+
 // ------------------------------------------------------------------ tests
 
 #[cfg(test)]
@@ -2222,5 +2241,20 @@ mod tests {
         );
         let unread = invoke("unread_total", serde_json::json!({}));
         assert_eq!(unread.as_i64(), Some(3), "local mirror applied at once");
+    }
+
+    #[test]
+    fn purge_demo_removes_seeded_account_and_messages() {
+        let (_dir, state) = seeded_state();
+        let st = state.store.lock().unwrap();
+        assert_eq!(queries::list_accounts(st.conn()).unwrap().len(), 1);
+        purge_demo(&st);
+        assert!(
+            queries::list_accounts(st.conn()).unwrap().is_empty(),
+            "demo account and cascaded messages must be removed on normal startup"
+        );
+        let all =
+            queries::thread_list(st.conn(), Scope::Unified, ImportanceFilter::All, 50, 0).unwrap();
+        assert!(all.is_empty());
     }
 }

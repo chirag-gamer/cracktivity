@@ -9,7 +9,7 @@ import {
   DialogTitle,
   Input,
 } from "@fluentui/react-components";
-import { Command, CornerDownLeft, Keyboard, Search } from "lucide-react";
+import { CornerDownLeft, Keyboard, Search, SlidersHorizontal } from "lucide-react";
 import { S } from "../shared/strings";
 import { Kbd } from "../shared/ui";
 import { KEYMAP_SCHEMES, shortcutRows, type KeymapScheme } from "./keymap";
@@ -121,7 +121,7 @@ export function CommandPalette({
           <DialogTitle>
             <span className="dialog-title-row">
               <span className="dialog-title-icon">
-                <Command size={15} />
+                <SlidersHorizontal size={15} />
               </span>
               <span>{S.commands}</span>
             </span>

@@ -3,14 +3,13 @@ import {
   Brush,
   CircleX,
   Clock,
-  Command,
   Inbox,
   Keyboard,
   Mail,
   Plus,
   RefreshCw,
+  Search,
   Settings,
-  ShieldCheck,
   SquarePen,
   TriangleAlert,
 } from "lucide-react";
@@ -44,62 +43,95 @@ export function AccountPane({
   const hasAuthError = statuses.some((s) => s.state === "auth_failed");
   const hasOffline = statuses.some((s) => s.state === "offline");
   const isSyncing = statuses.some((s) => s.state === "syncing");
+  const isConnecting = statuses.some((s) => s.state === "connecting");
+  const isConnected =
+    statuses.length > 0 &&
+    !hasAuthError &&
+    !hasOffline &&
+    !isSyncing &&
+    !isConnecting &&
+    statuses.some((s) => s.state === "ok");
+
+  const statusSummary = hasAuthError
+    ? {
+        dotClass: " is-error",
+        sub: "Auth attention",
+        label: "Account authentication needs attention",
+      }
+    : hasOffline
+      ? {
+          dotClass: " is-offline",
+          sub: "Offline",
+          label: "Working offline from local cache",
+        }
+      : isSyncing
+        ? {
+            dotClass: " is-syncing",
+            sub: "Syncing…",
+            label: "Syncing mail with server",
+          }
+        : isConnecting
+          ? {
+              dotClass: " is-syncing",
+              sub: "Connecting…",
+              label: "Connecting to mail server",
+            }
+          : isConnected
+            ? {
+                dotClass: " is-ok",
+                sub: "Connected",
+                label: "Local direct IMAP/SMTP connection active",
+              }
+            : {
+                dotClass: " is-idle",
+                sub: accounts.length === 0 ? "No accounts" : "Ready",
+                label:
+                  accounts.length === 0
+                    ? "No mail accounts connected yet"
+                    : "Waiting for connection status",
+              };
 
   const handleCompose = () => {
     if (onCompose) {
       onCompose();
     } else {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true }));
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "c", bubbles: true }),
+      );
     }
   };
 
   return (
-    <nav className="pane-accounts" aria-label="Accounts" data-testid="account-pane">
+    <nav
+      className="pane-accounts"
+      aria-label="Accounts"
+      data-testid="account-pane"
+    >
       <div className="sidebar-header">
         <div className="brand-badge">
           <div className="brand-icon-box" aria-hidden="true">
-            <Mail size={15} />
+            <Mail />
           </div>
           <div className="brand-text-col">
             <span className="brand-name">cracktivity</span>
-            <span className="brand-sub">
-              {hasAuthError
-                ? "Auth attention"
-                : hasOffline
-                  ? "Offline cache"
-                  : isSyncing
-                    ? "Syncing mail…"
-                    : "Local-first mail"}
-            </span>
+            <span className="brand-sub">{statusSummary.sub}</span>
           </div>
         </div>
         <div className="sidebar-header-actions">
           <span
-            className={`brand-status-dot${
-              hasAuthError
-                ? " is-error"
-                : hasOffline
-                  ? " is-offline"
-                  : isSyncing
-                    ? " is-syncing"
-                    : ""
-            }`}
-            title={
-              hasAuthError
-                ? "Account authentication needs attention"
-                : hasOffline
-                  ? "Working offline from encrypted cache"
-                  : "Local direct IMAP/SMTP connection active"
-            }
+            role="img"
+            className={`brand-status-dot${statusSummary.dotClass}`}
+            title={statusSummary.label}
+            aria-label={statusSummary.label}
           />
           {onOpenPalette && (
             <IconButton
               label="Command palette (Ctrl+K)"
               size="xs"
-              variant="subtle"
+              variant="ghost"
               onClick={onOpenPalette}
             >
-              <Command size={13} />
+              <Search />
             </IconButton>
           )}
         </div>
@@ -114,7 +146,7 @@ export function AccountPane({
           aria-label="Compose new email"
         >
           <span className="compose-button__left">
-            <SquarePen size={14} />
+            <SquarePen />
             <span>New Message</span>
           </span>
           <Kbd size="xs" className="compose-kbd">
@@ -133,10 +165,12 @@ export function AccountPane({
             data-testid="nav-unified"
           >
             <span className="nav-icon">
-              <Inbox size={15} />
+              <Inbox />
             </span>
             <span className="nav-label">{S.unifiedInbox}</span>
-            {totalUnread > 0 && <span className="nav-count">{totalUnread}</span>}
+            {totalUnread > 0 && (
+              <span className="nav-count">{totalUnread}</span>
+            )}
           </button>
         </div>
 
@@ -151,7 +185,7 @@ export function AccountPane({
                 title="Add mail account"
                 aria-label="Add mail account"
               >
-                <Plus size={13} />
+                <Plus />
               </button>
             )}
           </div>
@@ -199,26 +233,37 @@ export function AccountPane({
                       <span className="nav-sublabel">{a.email}</span>
                     )}
                   </span>
-                  {a.unread > 0 && <span className="nav-count">{a.unread}</span>}
+                  {a.unread > 0 && (
+                    <span className="nav-count">{a.unread}</span>
+                  )}
                   {state === "offline" && (
                     <span
+                      role="img"
                       className="nav-state offline"
                       title={st?.error ?? "Offline"}
+                      aria-label={st?.error ?? "Offline"}
                     >
-                      <TriangleAlert size={13} />
+                      <TriangleAlert />
                     </span>
                   )}
                   {state === "auth_failed" && (
                     <span
+                      role="img"
                       className="nav-state error"
                       title={st?.error ?? "Auth failed"}
+                      aria-label={st?.error ?? "Authentication failed"}
                     >
-                      <CircleX size={13} />
+                      <CircleX />
                     </span>
                   )}
                   {state === "syncing" && (
-                    <span className="nav-state syncing" title="Syncing">
-                      <RefreshCw size={13} />
+                    <span
+                      role="img"
+                      className="nav-state syncing"
+                      title="Syncing"
+                      aria-label="Syncing"
+                    >
+                      <RefreshCw />
                     </span>
                   )}
                 </button>
@@ -239,7 +284,7 @@ export function AccountPane({
             data-testid="nav-followups"
           >
             <span className="nav-icon">
-              <Clock size={15} />
+              <Clock />
             </span>
             <span className="nav-label">{S.followups}</span>
           </button>
@@ -251,7 +296,7 @@ export function AccountPane({
             data-testid="nav-cleanup"
           >
             <span className="nav-icon">
-              <Brush size={15} />
+              <Brush />
             </span>
             <span className="nav-label">{S.cleanup}</span>
           </button>
@@ -268,7 +313,7 @@ export function AccountPane({
             data-testid="nav-settings"
           >
             <span className="nav-icon">
-              <Settings size={15} />
+              <Settings />
             </span>
             <span className="nav-label">{S.settings}</span>
           </button>
@@ -279,13 +324,9 @@ export function AccountPane({
               variant="ghost"
               onClick={onOpenShortcuts}
             >
-              <Keyboard size={14} />
+              <Keyboard />
             </IconButton>
           )}
-        </div>
-        <div className="sidebar-trust-pill" title="Encrypted local SQLCipher database; zero telemetry">
-          <ShieldCheck size={12} />
-          <span>SQLCipher • Zero telemetry</span>
         </div>
       </div>
     </nav>

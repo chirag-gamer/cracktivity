@@ -163,12 +163,19 @@ export function MainApp() {
       ipc
         .threadMessages(thrid)
         .then((ms) => {
-          const target = ms[ms.length - 1];
-          if (target) {
-            const desired = nextStarred !== undefined ? nextStarred : !target.starred;
-            return ipc.setStarred(target.id, desired);
+          if (ms.length === 0) return undefined;
+          const anyStarred = ms.some((m) => m.starred);
+          const desired = nextStarred !== undefined ? nextStarred : !anyStarred;
+          if (desired) {
+            const target = ms[ms.length - 1]!;
+            return ipc.setStarred(target.id, true);
           }
-          return undefined;
+          const starredMsgs = ms.filter((m) => m.starred);
+          const targets =
+            starredMsgs.length > 0 ? starredMsgs : [ms[ms.length - 1]!];
+          return Promise.all(
+            targets.map((m) => ipc.setStarred(m.id, false)),
+          ).then(() => undefined);
         })
         .then(() => mail.refresh())
         .catch(() => {});
@@ -330,6 +337,8 @@ export function MainApp() {
     [mail.messages, newestOf, openComposer],
   );
 
+  const isInboxScope =
+    mail.scope.kind === "unified" || mail.scope.kind === "account";
   const activeAccount =
     mail.scope.kind === "account"
       ? mail.accounts.find((a) => a.id === (mail.scope as { id: number }).id)
@@ -337,7 +346,11 @@ export function MainApp() {
   const toolbarTitle =
     mail.scope.kind === "account"
       ? (activeAccount?.display_name ?? activeAccount?.email ?? "Account")
-      : "Inbox";
+      : mail.scope.kind === "followups"
+        ? S.followups
+        : mail.scope.kind === "cleanup"
+          ? S.cleanup
+          : "Inbox";
   const scopeUnread =
     mail.scope.kind === "account"
       ? (activeAccount?.unread ?? 0)
@@ -365,8 +378,8 @@ export function MainApp() {
             statuses={mail.statuses}
             alsoServer={alsoServer}
             title={toolbarTitle}
-            threadCount={mail.threads.length}
-            unreadCount={scopeUnread}
+            threadCount={isInboxScope ? mail.threads.length : undefined}
+            unreadCount={isInboxScope ? scopeUnread : undefined}
             onSyncNow={handleSyncNow}
           />
         )}

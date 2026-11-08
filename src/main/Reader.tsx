@@ -5,16 +5,16 @@
  * unique origin, no IPC access, spec §10.2) whose srcDoc was already
  * sanitized in Rust and carries its own CSP meta (spec §8.4).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Archive,
-  Command,
   Image,
   Keyboard,
   Mail,
   Reply,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   SquarePen,
   Star,
@@ -252,9 +252,11 @@ export function Reader({
 }: ReaderProps) {
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const summarizeReqRef = useRef(0);
 
-  // Reset thread summary when switching threads
+  // Reset thread summary and invalidate any in-flight stream when switching threads
   useEffect(() => {
+    summarizeReqRef.current += 1;
     setSummary(null);
     setSummaryBusy(false);
   }, [threadId]);
@@ -264,12 +266,12 @@ export function Reader({
       <div className="pane-reader empty" role="status">
         <div className="reader-empty-card">
           <div className="reader-empty-icon">
-            <Mail size={22} />
+            <Mail size={20} />
           </div>
           <h2 className="reader-empty-title">{S.noSelection}</h2>
           <p className="reader-empty-desc">
-            Choose a conversation from the list, or use keyboard-first commands
-            to triage your inbox at 60 fps.
+            Select a conversation from the list, or use keyboard shortcuts to
+            compose and navigate.
           </p>
 
           {(onCompose || onFocusSearch || onOpenPalette || onOpenShortcuts) && (
@@ -303,7 +305,7 @@ export function Reader({
                   variant="secondary"
                   size="sm"
                   pill
-                  icon={<Command size={14} />}
+                  icon={<SlidersHorizontal size={14} />}
                   kbd="Ctrl+K"
                   onClick={onOpenPalette}
                 >
@@ -392,17 +394,34 @@ export function Reader({
 
   const runSummarize = () => {
     if (!threadId) return;
+    const reqId = ++summarizeReqRef.current;
     setSummaryBusy(true);
     setSummary("");
     ipc
       .aiStream(
         "ai_summarize",
         { threadId },
-        (t) => setSummary((s) => (s ?? "") + t),
-        (n) => setSummary((s) => `${s ?? ""}\n[${n}]`),
-        () => setSummaryBusy(false),
+        (t) => {
+          if (reqId === summarizeReqRef.current) {
+            setSummary((s) => (s ?? "") + t);
+          }
+        },
+        (n) => {
+          if (reqId === summarizeReqRef.current) {
+            setSummary((s) => `${s ?? ""}\n[${n}]`);
+          }
+        },
+        () => {
+          if (reqId === summarizeReqRef.current) {
+            setSummaryBusy(false);
+          }
+        },
       )
-      .catch(() => setSummaryBusy(false));
+      .catch(() => {
+        if (reqId === summarizeReqRef.current) {
+          setSummaryBusy(false);
+        }
+      });
   };
 
   return (
@@ -516,7 +535,7 @@ export function Reader({
           <MessageCard
             key={m.id}
             m={m}
-            threadSubject={latest?.subject}
+            threadSubject={latest?.subject ?? ""}
             onMarkRead={onMarkRead}
             onRefresh={onRefresh}
           />
