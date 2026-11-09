@@ -332,6 +332,12 @@ describe("Onboarding Wizard & First-Run Experience", () => {
 
   it("SettingsView Jan-inspired AI providers, provider modal, and custom provider dialog work", async () => {
     const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+    // Stateful settings store so get_settings reflects set_setting writes,
+    // like the real persisted settings table does.
+    const settingsStore: Record<string, unknown> = {
+      "ai.engine": "anthropic",
+      "ai.byo_model": "claude-sonnet-4-5",
+    };
     mockIPC((cmd, args) => {
       calls.push([cmd, args as Record<string, unknown>]);
       switch (cmd) {
@@ -348,10 +354,12 @@ describe("Onboarding Wizard & First-Run Experience", () => {
             model_disk_bytes: 397_000_000,
           };
         case "get_settings":
-          return {
-            "ai.engine": "anthropic",
-            "ai.byo_model": "claude-sonnet-4-5",
-          };
+          return settingsStore;
+        case "set_setting":
+          settingsStore[(args as { key: string }).key] = (
+            args as { value: unknown }
+          ).value;
+          return null;
         case "mcp_audit_tail":
           return [];
         case "diagnostics_hosts":
@@ -450,6 +458,34 @@ describe("Onboarding Wizard & First-Run Experience", () => {
     fireEvent.keyDown(listbox, { key: "Escape" });
 
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("UiSelect portals the listbox into the enclosing dialog surface, not document.body", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(
+      <div className="fui-DialogSurface">
+        <UiSelect
+          value="587"
+          ariaLabel="SMTP port & TLS mode"
+          onChange={onChange}
+          options={[
+            { value: "587", label: "587 (STARTTLS)" },
+            { value: "465", label: "465 (Implicit TLS)" },
+          ]}
+        />
+      </div>,
+    );
+
+    fireEvent.click(getByRole("combobox", { name: "SMTP port & TLS mode" }));
+    const listbox = getByRole("listbox");
+    const surface = document.querySelector(".fui-DialogSurface");
+    expect(surface).not.toBeNull();
+    // The options must stay inside the dialog's focus/ARIA boundary.
+    expect(surface).toContainElement(listbox);
+    expect(listbox.parentElement).not.toBe(document.body);
+
+    fireEvent.click(getByRole("option", { name: "465 (Implicit TLS)" }));
+    expect(onChange).toHaveBeenCalledWith("465");
   });
 
   it("Composer pop-out button opens a standalone composer window", async () => {

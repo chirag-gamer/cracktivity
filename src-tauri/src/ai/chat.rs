@@ -306,6 +306,17 @@ pub fn sanitize_url_for_log(raw: &str) -> String {
     }
 }
 
+/// Returns `true` only when `base_url`'s parsed host matches `expected`
+/// exactly (case-insensitive). Substring matching would misroute custom
+/// endpoints that merely embed a provider domain in their path (e.g. a
+/// self-hosted proxy at `https://proxy.example.com/generativelanguage.googleapis.com/v1beta`).
+fn host_is(base_url: &str, expected: &str) -> bool {
+    url::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case(expected)))
+        .unwrap_or(false)
+}
+
 /// Normalizes a provider base URL (`https://api.openai.com`,
 /// `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`,
 /// `https://generativelanguage.googleapis.com/v1beta/openai`, etc.) into its
@@ -314,7 +325,7 @@ pub fn resolve_completions_url(base_url: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.ends_with("/chat/completions") {
         trimmed.to_string()
-    } else if trimmed.contains("generativelanguage.googleapis.com") && trimmed.ends_with("/v1beta")
+    } else if host_is(trimmed, "generativelanguage.googleapis.com") && trimmed.ends_with("/v1beta")
     {
         format!("{trimmed}/openai/chat/completions")
     } else if trimmed.ends_with("/v1")
@@ -354,7 +365,7 @@ pub fn resolve_models_url(base_url: &str, is_anthropic: bool) -> String {
             .trim_end_matches('/');
         if base.ends_with("/models") {
             base.to_string()
-        } else if base.contains("generativelanguage.googleapis.com") {
+        } else if host_is(base, "generativelanguage.googleapis.com") {
             if base.ends_with("/v1beta/openai") || base.ends_with("/openai") {
                 format!("{base}/models")
             } else if base.ends_with("/v1beta") {
@@ -760,6 +771,37 @@ mod tests {
         assert_eq!(
             resolve_anthropic_url("https://api.anthropic.com"),
             "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    /// A custom endpoint whose *path* merely contains a provider domain must
+    /// not be routed to that provider's wire format (host must match exactly).
+    #[test]
+    fn custom_urls_containing_provider_domain_in_path_are_not_misrouted() {
+        assert_eq!(
+            resolve_completions_url(
+                "https://proxy.example.com/generativelanguage.googleapis.com/v1beta"
+            ),
+            "https://proxy.example.com/generativelanguage.googleapis.com/v1beta/v1/chat/completions"
+        );
+        assert_eq!(
+            resolve_models_url(
+                "https://proxy.example.com/generativelanguage.googleapis.com/v1beta",
+                false
+            ),
+            "https://proxy.example.com/generativelanguage.googleapis.com/v1beta/v1/models"
+        );
+        // Substring-in-hostname lookalikes are not Gemini either.
+        assert_eq!(
+            resolve_completions_url(
+                "https://generativelanguage.googleapis.com.evil.example/v1beta"
+            ),
+            "https://generativelanguage.googleapis.com.evil.example/v1beta/v1/chat/completions"
+        );
+        // Case-insensitive exact host match still routes Gemini correctly.
+        assert_eq!(
+            resolve_completions_url("https://GenerativeLanguage.Googleapis.com/v1beta"),
+            "https://GenerativeLanguage.Googleapis.com/v1beta/openai/chat/completions"
         );
     }
 

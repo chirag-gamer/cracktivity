@@ -2051,6 +2051,13 @@ kbd {
 .quick-chip:hover {
   background: var(--ai-bg-hover);
 }
+.quick-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.quick-chip:disabled:hover {
+  background: var(--ai-bg);
+}
 
 .quick-reply-trigger {
   width: 100%;

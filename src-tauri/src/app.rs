@@ -2521,23 +2521,20 @@ mod tests {
         assert!(validate_ai_endpoint_url("http://localhost.attacker.example/v1").is_err());
         assert!(validate_ai_endpoint_url("http://127.0.0.1.attacker.example/v1").is_err());
         assert!(validate_ai_endpoint_url("http://remote.example.com/v1").is_err());
-        assert_eq!(
+        assert!(
             validate_ai_endpoint_url("http://localhost:11434/v1")
                 .unwrap()
-                .1,
-            true
+                .1
         );
-        assert_eq!(
+        assert!(
             validate_ai_endpoint_url("http://127.0.0.1:1234/v1")
                 .unwrap()
-                .1,
-            true
+                .1
         );
-        assert_eq!(
-            validate_ai_endpoint_url("https://api.openai.com/v1")
+        assert!(
+            !validate_ai_endpoint_url("https://api.openai.com/v1")
                 .unwrap()
-                .1,
-            false
+                .1
         );
     }
 

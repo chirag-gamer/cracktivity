@@ -170,6 +170,29 @@ describe("Composer (FR-17/18)", () => {
       expect(commands.map(([c]) => c)).toContain("send_draft");
     });
   });
+
+  it("tone chips disable while an AI draft stream is live so no second stream starts", async () => {
+    // Returning null never delivers the Done frame, so the mount auto-stream
+    // stays "live" for the whole test.
+    mockIPC((cmd, args) => {
+      commands.push([cmd, args]);
+      return null;
+    });
+    const { findByTestId, getByText } = render(
+      <Composer target={{ ...target, threadId: "t-7" }} onClose={() => {}} onSent={() => {}} />,
+    );
+    await findByTestId("composer-body");
+    const chip = () => getByText("Friendly").closest("button") as HTMLButtonElement;
+    await waitFor(() => {
+      expect(chip().disabled).toBe(true);
+    });
+    // The mount auto-stream is the only stream so far.
+    expect(commands.filter(([c]) => c === "ai_draft_reply")).toHaveLength(1);
+    // Clicking other tones while streaming is a no-op.
+    fireEvent.click(chip());
+    fireEvent.click(getByText("Professional").closest("button")!);
+    expect(commands.filter(([c]) => c === "ai_draft_reply")).toHaveLength(1);
+  });
 });
 
 describe("OnboardingDialog (FR-20/D-005)", () => {

@@ -449,8 +449,9 @@ export function SettingsView() {
   }, [reload, reloadLogs]);
 
   const set = (key: string, value: unknown) => {
-    ipc.setSetting(key, value).catch(() => {});
+    const done = ipc.setSetting(key, value).catch(() => {});
     setSettings((s) => ({ ...s, [key]: value }));
+    return done;
   };
 
   const bool = (key: string) => settings[key] === true;
@@ -715,9 +716,12 @@ export function SettingsView() {
         });
       }
     }
-    set("ai.engine", slug);
-    set("ai.byo_model", firstModel);
+    await set("ai.engine", slug);
+    await set("ai.byo_model", firstModel);
     setAi((prev) => (prev ? { ...prev, engine: slug } : prev));
+    // Refresh ai_status immediately so the provider modal we open below sees
+    // the freshly stored key as `supplied` instead of unset until next reload.
+    reload();
     setAddProviderOpen(false);
     setCustomName("");
     setCustomBaseUrl("");

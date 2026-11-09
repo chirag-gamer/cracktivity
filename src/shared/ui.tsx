@@ -423,6 +423,11 @@ export function UiSelect({
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
   const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
+  // When the select lives inside a Fluent dialog, portal into the dialog
+  // surface itself (not `document.body`) so the listbox stays inside the
+  // modal's focus trap and ARIA boundary; `document.body` otherwise.
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  const portalTargetRef = useRef<HTMLElement | null>(null);
 
   const current =
     options.find((o) => o.value === value) ??
@@ -448,30 +453,42 @@ export function UiSelect({
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const viewportH = window.innerHeight || 800;
-    const viewportW = window.innerWidth || 1280;
+    // Inside a dialog the popover is absolutely positioned relative to the
+    // dialog surface; on `document.body` it is fixed relative to the viewport.
+    const containerRect =
+      portalTargetRef.current && portalTargetRef.current !== document.body
+        ? portalTargetRef.current.getBoundingClientRect()
+        : null;
+    const offsetLeft = containerRect?.left ?? 0;
+    const offsetTop = containerRect?.top ?? 0;
+    const viewportH = containerRect?.height ?? (window.innerHeight || 800);
+    const viewportW = containerRect?.width ?? (window.innerWidth || 1280);
+    const containerBottom = containerRect?.bottom ?? (window.innerHeight || 800);
     const estimatedHeight = Math.min(280, options.length * 40 + 16);
-    const spaceBelow = viewportH - rect.bottom - 12;
-    const spaceAbove = rect.top - 12;
+    const spaceBelow = viewportH - (rect.bottom - offsetTop) - 12;
+    const spaceAbove = rect.top - offsetTop - 12;
     const placeAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
     const maxHeight = Math.max(120, Math.min(280, placeAbove ? spaceAbove : spaceBelow));
     const width = Math.max(rect.width, 180);
-    const left = Math.max(8, Math.min(rect.left, viewportW - width - 8));
+    const left = Math.max(
+      8,
+      Math.min(rect.left - offsetLeft, viewportW - width - 8),
+    );
 
     setPopoverStyle(
       placeAbove
         ? {
-            position: "fixed",
+            position: containerRect ? "absolute" : "fixed",
             left: `${left}px`,
-            bottom: `${viewportH - rect.top + 6}px`,
+            bottom: `${containerBottom - rect.top + 6}px`,
             width: `${width}px`,
             maxHeight: `${maxHeight}px`,
             zIndex: 10000,
           }
         : {
-            position: "fixed",
+            position: containerRect ? "absolute" : "fixed",
             left: `${left}px`,
-            top: `${rect.bottom + 6}px`,
+            top: `${rect.bottom - offsetTop + 6}px`,
             width: `${width}px`,
             maxHeight: `${maxHeight}px`,
             zIndex: 10000,
@@ -480,7 +497,18 @@ export function UiSelect({
   }, [options.length]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPortalTarget(null);
+      portalTargetRef.current = null;
+      return;
+    }
+    const surface = wrapRef.current?.closest(".fui-DialogSurface");
+    if (surface instanceof HTMLElement) {
+      portalTargetRef.current = surface;
+    } else {
+      portalTargetRef.current = document.body;
+    }
+    setPortalTarget(portalTargetRef.current);
     updatePopoverPosition();
     const onDocDown = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -569,7 +597,7 @@ export function UiSelect({
         />
       </button>
       {open &&
-        typeof document !== "undefined" &&
+        portalTarget &&
         createPortal(
           <div
             ref={popoverRef}
@@ -613,7 +641,7 @@ export function UiSelect({
               );
             })}
           </div>,
-          document.body,
+          portalTarget,
         )}
     </div>
   );

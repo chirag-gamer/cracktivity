@@ -152,6 +152,10 @@ export function Composer({
   };
 
   const applyTone = (tone: string) => {
+    // A tone re-streams the whole draft; a second stream while one is live
+    // would interleave both into the body and let the first completion
+    // re-enable pop-out before the second finishes.
+    if (aiStreaming) return;
     if (target.threadId) {
       const nextInstruction = `Make the reply ${tone.toLowerCase()}`;
       setActiveInstruction(nextInstruction);
@@ -269,6 +273,7 @@ export function Composer({
               key={tone}
               type="button"
               className="quick-chip"
+              disabled={aiStreaming}
               onClick={() => applyTone(tone)}
             >
               <Sparkles size={11} />
