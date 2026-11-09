@@ -28,6 +28,26 @@ import {
 } from "./keymap";
 import { S } from "../shared/strings";
 
+const DEFAULT_RAIL_WIDTH = 252;
+const MIN_RAIL_WIDTH = 200;
+const MAX_RAIL_WIDTH = 360;
+
+const DEFAULT_LIST_WIDTH = 388;
+const MIN_LIST_WIDTH = 300;
+const MAX_LIST_WIDTH = 640;
+
+function readSavedWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = Number(localStorage.getItem(key));
+    if (Number.isFinite(raw) && raw >= min && raw <= max) {
+      return raw;
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return fallback;
+}
+
 export function MainApp() {
   const mail = useMail();
   const [search, setSearch] = useState<SearchRow[] | null>(null);
@@ -39,6 +59,44 @@ export function MainApp() {
   const [composer, setComposer] = useState<ComposerTarget | null>(null);
   const [onboarding, setOnboarding] = useState(false);
   const [keymap, setKeymap] = useState<KeymapScheme>(() => readKeymapScheme());
+  const [railWidth, setRailWidth] = useState<number>(() =>
+    readSavedWidth("cracktivity.pane.railWidth", DEFAULT_RAIL_WIDTH, MIN_RAIL_WIDTH, MAX_RAIL_WIDTH),
+  );
+  const [listWidth, setListWidth] = useState<number>(() =>
+    readSavedWidth("cracktivity.pane.listWidth", DEFAULT_LIST_WIDTH, MIN_LIST_WIDTH, MAX_LIST_WIDTH),
+  );
+  const [draggingSplitter, setDraggingSplitter] = useState<"rail" | "list" | null>(null);
+
+  const startResize = useCallback(
+    (which: "rail" | "list", startX: number) => {
+      const initialWidth = which === "rail" ? railWidth : listWidth;
+      setDraggingSplitter(which);
+      const onMove = (ev: MouseEvent) => {
+        const delta = ev.clientX - startX;
+        if (which === "rail") {
+          const clamped = Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, initialWidth + delta));
+          setRailWidth(clamped);
+          try {
+            localStorage.setItem("cracktivity.pane.railWidth", String(clamped));
+          } catch {}
+        } else {
+          const clamped = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, initialWidth + delta));
+          setListWidth(clamped);
+          try {
+            localStorage.setItem("cracktivity.pane.listWidth", String(clamped));
+          } catch {}
+        }
+      };
+      const onUp = () => {
+        setDraggingSplitter(null);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [railWidth, listWidth],
+  );
 
   // Keymap scheme (FR-30 AC): DB row is canonical, mirror seeds first paint;
   // in-window changes from Settings apply immediately (D-046).
@@ -58,10 +116,9 @@ export function MainApp() {
       })
       .catch(() => {});
     // Only on the initial load.
-
   }, [mail.loading]);
 
-  useEffect(() => {
+  const refreshSettings = useCallback(() => {
     ipc
       .getSettings()
       .then((s) => {
@@ -70,6 +127,10 @@ export function MainApp() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    refreshSettings();
+  }, [refreshSettings, mail.scope, onboarding]);
 
   // Selection cursor for j/k: index into the current thread list.
   const cursor = useRef(0);
@@ -128,17 +189,64 @@ export function MainApp() {
     [mail.messages],
   );
 
-  const newestOf = (thrid: string | null): ThreadRow | null => {
-    if (!thrid) return null;
-    return mail.threads.find((t) => t.thrid === thrid) ?? null;
-  };
-
-  const openComposer = useCallback(
-    (target: ComposerTarget) => {
-      setComposer(target);
+  const newestOf = useCallback(
+    (thrid: string | null): ThreadRow | null => {
+      if (!thrid) return null;
+      return mail.threads.find((t) => t.thrid === thrid) ?? null;
     },
-    [],
+    [mail.threads],
   );
+
+  const openComposer = useCallback((target: ComposerTarget) => {
+    setComposer(target);
+  }, []);
+
+  const archiveThreadById = useCallback(
+    (thrid: string) => {
+      ipc
+        .threadMessages(thrid)
+        .then((ms) => {
+          const target = ms[ms.length - 1];
+          if (target) return ipc.archiveMessage(target.id);
+          return undefined;
+        })
+        .then(() => mail.refresh())
+        .catch(() => {});
+    },
+    [mail],
+  );
+
+  const toggleStarThreadById = useCallback(
+    (thrid: string, nextStarred?: boolean) => {
+      ipc
+        .threadMessages(thrid)
+        .then((ms) => {
+          if (ms.length === 0) return undefined;
+          const anyStarred = ms.some((m) => m.starred);
+          const desired = nextStarred !== undefined ? nextStarred : !anyStarred;
+          if (desired) {
+            const target = ms[ms.length - 1]!;
+            return ipc.setStarred(target.id, true);
+          }
+          const starredMsgs = ms.filter((m) => m.starred);
+          const targets =
+            starredMsgs.length > 0 ? starredMsgs : [ms[ms.length - 1]!];
+          return Promise.all(
+            targets.map((m) => ipc.setStarred(m.id, false)),
+          ).then(() => undefined);
+        })
+        .then(() => mail.refresh())
+        .catch(() => {});
+    },
+    [mail],
+  );
+
+  const handleSyncNow = useCallback(() => {
+    void ipc
+      .syncNow()
+      .then(() => mail.refresh())
+      .catch(() => {});
+  }, [mail]);
 
   const actions = useMemo(
     () => ({
@@ -149,15 +257,7 @@ export function MainApp() {
         // thread (the one being triaged); older thread messages stay.
         const t = newestOf(mail.selectedThrid);
         if (t) {
-          ipc
-            .threadMessages(t.thrid)
-            .then((ms) => {
-              const target = ms[ms.length - 1];
-              if (target) return ipc.archiveMessage(target.id);
-              return undefined;
-            })
-            .then(() => mail.refresh())
-            .catch(() => {});
+          archiveThreadById(t.thrid);
         }
       },
       toggleUnread: () => {
@@ -172,15 +272,7 @@ export function MainApp() {
       toggleStar: () => {
         const t = newestOf(mail.selectedThrid);
         if (!t) return;
-        ipc
-          .threadMessages(t.thrid)
-          .then((ms) => {
-            const target = ms[ms.length - 1];
-            if (target) return ipc.setStarred(target.id, !target.starred);
-            return undefined;
-          })
-          .then(() => mail.refresh())
-          .catch(() => {});
+        toggleStarThreadById(t.thrid);
       },
       compose: () => {
         const first = mail.accounts[0];
@@ -190,6 +282,8 @@ export function MainApp() {
             to: [],
             subject: "",
           });
+        } else {
+          setAdding(true);
         }
       },
       reply: () => {
@@ -219,7 +313,19 @@ export function MainApp() {
         if (search) setSearch(null);
       },
     }),
-    [mail.accounts, mail.selectedThrid, mail.threads, mail.messages, mail, selectAt, markThreadRead, search, openComposer],
+    [
+      mail.accounts,
+      mail.selectedThrid,
+      mail.messages,
+      mail,
+      selectAt,
+      markThreadRead,
+      search,
+      openComposer,
+      newestOf,
+      archiveThreadById,
+      toggleStarThreadById,
+    ],
   );
   const modalOpen = overlay || palette || adding || composer !== null;
   useKeyboard(actions, !modalOpen, keymap);
@@ -239,28 +345,26 @@ export function MainApp() {
       { id: "followups", label: S.followups, run: () => mail.setScope({ kind: "followups" }) },
       { id: "cleanup", label: S.cleanup, run: () => mail.setScope({ kind: "cleanup" }) },
       { id: "settings", label: S.settings, run: () => mail.setScope({ kind: "settings" }) },
-      { id: "sync", label: S.cmdSync, run: () => void ipc.syncNow().catch(() => {}) },
+      { id: "sync", label: S.cmdSync, run: handleSyncNow },
       { id: "add", label: S.addAccount, run: () => setAdding(true) },
       {
         id: "compose",
         label: S.compose,
-        run: () => {
-          const first = mail.accounts[0];
-          if (first)
-            openComposer({
-              accountId: first.id,
-              to: [],
-              subject: "",
-            });
-        },
+        run: actions.compose,
       },
     ],
-    [mail, openComposer],
+    [mail, handleSyncNow, actions.compose],
   );
 
-  const onMarkRead = useCallback((m: { id: number; unread: boolean }) => {
-    ipc.markRead(m.id, !m.unread).catch(() => {});
-  }, []);
+  const onMarkRead = useCallback(
+    (m: { id: number; unread: boolean }) => {
+      ipc
+        .markRead(m.id, m.unread)
+        .then(() => mail.refresh())
+        .catch(() => {});
+    },
+    [mail],
+  );
 
   const openFollowUp = useCallback(
     (row: { account_id: number; to: { email: string } | null; subject: string; thrid: string }) => {
@@ -285,28 +389,83 @@ export function MainApp() {
         subject: t && !t.subject.startsWith("Re:") ? `Re: ${t.subject}` : (t?.subject ?? ""),
         threadId,
         initialBody: "",
+        instruction,
       });
-      // The instruction steers the AI draft (FR-22); pass it through the
-      // composer's streaming effect via the subject field is wrong. the
-      // composer streams with its own instruction, so stash it on the DOM
-      // node for the composer to read on mount.
-      window.setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent("cracktivity:ai-instruction", { detail: instruction }),
-        );
-      }, 0);
     },
-    [mail.messages],
+    [mail.messages, newestOf, openComposer],
   );
 
+  const isInboxScope =
+    mail.scope.kind === "unified" || mail.scope.kind === "account";
+  const activeAccount =
+    mail.scope.kind === "account"
+      ? mail.accounts.find((a) => a.id === (mail.scope as { id: number }).id)
+      : undefined;
+  const toolbarTitle =
+    mail.scope.kind === "account"
+      ? (activeAccount?.display_name ?? activeAccount?.email ?? "Account")
+      : mail.scope.kind === "followups"
+        ? S.followups
+        : mail.scope.kind === "cleanup"
+          ? S.cleanup
+          : "Inbox";
+  const scopeUnread =
+    mail.scope.kind === "account"
+      ? (activeAccount?.unread ?? 0)
+      : mail.accounts.reduce((sum, a) => sum + a.unread, 0);
+
   return (
-    <div className="app-shell" data-testid="main-app">
+    <div
+      className={`app-shell${draggingSplitter ? " is-resizing" : ""}`}
+      data-testid="main-app"
+      style={
+        {
+          "--rail-width": `${railWidth}px`,
+          "--list-width": `${listWidth}px`,
+        } as React.CSSProperties
+      }
+    >
       <AccountPane
         accounts={mail.accounts}
         statuses={mail.statuses}
         scope={mail.scope}
         onScope={mail.setScope}
         onCompose={actions.compose}
+        onAddAccount={() => setAdding(true)}
+        onOpenPalette={() => setPalette(true)}
+        onOpenShortcuts={() => setOverlay(true)}
+      />
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize accounts sidebar"
+        aria-valuenow={railWidth}
+        aria-valuemin={MIN_RAIL_WIDTH}
+        aria-valuemax={MAX_RAIL_WIDTH}
+        tabIndex={0}
+        data-testid="resizer-rail"
+        className={`pane-resizer pane-resizer--rail${draggingSplitter === "rail" ? " is-dragging" : ""}`}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          startResize("rail", e.clientX);
+        }}
+        onDoubleClick={() => {
+          setRailWidth(DEFAULT_RAIL_WIDTH);
+          try {
+            localStorage.setItem("cracktivity.pane.railWidth", String(DEFAULT_RAIL_WIDTH));
+          } catch {}
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            const step = e.key === "ArrowRight" ? 16 : -16;
+            const next = Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, railWidth + step));
+            setRailWidth(next);
+            try {
+              localStorage.setItem("cracktivity.pane.railWidth", String(next));
+            } catch {}
+          }
+        }}
       />
       <div className="pane-middle">
         {mail.scope.kind !== "settings" && (
@@ -317,6 +476,10 @@ export function MainApp() {
             onAddAccount={() => setAdding(true)}
             statuses={mail.statuses}
             alsoServer={alsoServer}
+            title={toolbarTitle}
+            threadCount={isInboxScope ? mail.threads.length : undefined}
+            unreadCount={isInboxScope ? scopeUnread : undefined}
+            onSyncNow={handleSyncNow}
           />
         )}
         {mail.scope.kind === "followups" ? (
@@ -343,26 +506,84 @@ export function MainApp() {
               mail.select(thrid);
             }}
             loading={mail.loading}
+            hasAccounts={mail.accounts.length > 0}
+            onAddAccount={() => setAdding(true)}
+            onSyncNow={handleSyncNow}
+            onShowAll={
+              mail.filter !== "all" ? () => mail.setFilter("all") : undefined
+            }
+            onOpenShortcuts={() => setOverlay(true)}
+            onArchiveThread={archiveThreadById}
+            onToggleStarThread={toggleStarThreadById}
           />
         )}
       </div>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize message list"
+        aria-valuenow={listWidth}
+        aria-valuemin={MIN_LIST_WIDTH}
+        aria-valuemax={MAX_LIST_WIDTH}
+        tabIndex={0}
+        data-testid="resizer-list"
+        className={`pane-resizer pane-resizer--list${draggingSplitter === "list" ? " is-dragging" : ""}`}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          startResize("list", e.clientX);
+        }}
+        onDoubleClick={() => {
+          setListWidth(DEFAULT_LIST_WIDTH);
+          try {
+            localStorage.setItem("cracktivity.pane.listWidth", String(DEFAULT_LIST_WIDTH));
+          } catch {}
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            const step = e.key === "ArrowRight" ? 16 : -16;
+            const next = Math.max(MIN_LIST_WIDTH, Math.min(MAX_LIST_WIDTH, listWidth + step));
+            setListWidth(next);
+            try {
+              localStorage.setItem("cracktivity.pane.listWidth", String(next));
+            } catch {}
+          }
+        }}
+      />
       <Reader
         messages={mail.messages}
         onMarkRead={onMarkRead}
         aiEnabled={aiEnabled}
         threadId={mail.selectedThrid}
         onDraftReply={openAiReply}
+        onReply={actions.reply}
+        onArchiveThread={actions.archive}
+        onToggleStarThread={actions.toggleStar}
+        onRefresh={() => mail.refresh()}
+        onCompose={actions.compose}
+        onFocusSearch={actions.focusSearch}
+        onOpenPalette={() => setPalette(true)}
+        onOpenShortcuts={() => setOverlay(true)}
       />
       <ShortcutsOverlay open={overlay} onClose={() => setOverlay(false)} scheme={keymap} />
       <CommandPalette
         open={palette}
         onClose={() => setPalette(false)}
         commands={commands}
+        onPickSearchHit={(hit) => {
+          if (mail.scope.kind === "settings") {
+            mail.setScope({ kind: "unified" });
+          }
+          mail.select(hit.thrid ?? `__msg-${hit.message_id}`);
+        }}
       />
       <AddAccountDialog
         open={adding}
         onClose={() => setAdding(false)}
-        onAdded={() => void ipc.syncNow().catch(() => {})}
+        onAdded={() => {
+          void ipc.syncNow().catch(() => {});
+          mail.refresh();
+        }}
       />
       {composer && (
         <div className="overlay">
@@ -381,12 +602,3 @@ export function MainApp() {
     </div>
   );
 }
-
-/** AI master switch read once per mount (the Settings view reloads it). */
-const aiEnabledRef = { current: false };
-void ipc
-  .getSettings()
-  .then((s) => {
-    aiEnabledRef.current = s["ai.enabled"] === true;
-  })
-  .catch(() => {});

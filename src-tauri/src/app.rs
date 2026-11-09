@@ -257,7 +257,9 @@ fn set_status(
 /// accounts read their stored values (FR-1).
 fn endpoint_of(acc: &AccountRow) -> Result<(String, u16), String> {
     if let Some(preset) = providers::ALL.iter().find(|p| p.id == acc.provider) {
-        return Ok((preset.imap_host.into(), preset.imap_port));
+        if !preset.imap_host.is_empty() {
+            return Ok((preset.imap_host.into(), preset.imap_port));
+        }
     }
     let host = acc
         .imap_host
@@ -1053,7 +1055,6 @@ pub async fn set_importance(
 #[allow(clippy::too_many_arguments)]
 pub async fn add_account(
     state: State<'_, AppState>,
-    app: AppHandle,
     provider_id: String,
     email: String,
     password: String,
@@ -1066,9 +1067,14 @@ pub async fn add_account(
     if !email_clean.contains('@') {
         return Err("enter a valid email address".into());
     }
+    let normalized_id = if provider_id == "imap" {
+        "generic"
+    } else {
+        provider_id.as_str()
+    };
     let preset = providers::ALL
         .iter()
-        .find(|p| p.id == provider_id)
+        .find(|p| p.id == normalized_id)
         .ok_or_else(|| format!("unknown provider {provider_id}"))?;
     if preset.auth == providers::AuthKind::OAuth2 {
         return Err(
@@ -1085,6 +1091,12 @@ pub async fn add_account(
     if preset.id == "generic" && smtp_host.is_none() {
         return Err("manual accounts need the SMTP server host".into());
     }
+    // The SQLite accounts.provider CHECK constraint allows ('gmail','outlook','icloud','zoho','yahoo','imap').
+    let db_provider = if preset.id == "generic" {
+        "imap"
+    } else {
+        preset.id
+    };
 
     let account_id = {
         let st = lock_store(&state)?;
@@ -1093,7 +1105,7 @@ pub async fn add_account(
         let id = dao::add_account(
             st.conn(),
             &dao::NewAccount {
-                provider: preset.id,
+                provider: db_provider,
                 email: &email_clean,
                 display_name: None,
                 auth_type: "app_password",
@@ -1125,7 +1137,6 @@ pub async fn add_account(
         }
     };
     state.inner().send(DriverMsg::SyncNow(account_id));
-    let _ = app; // reserved for a future "sync started" toast
     let st = lock_store(&state)?;
     queries::list_accounts(st.conn())
         .map_err(|e| e.to_string())?
@@ -1245,6 +1256,56 @@ pub async fn open_mailto(app: AppHandle, mailto: String) -> CmdResult<()> {
     crate::platform::shell::open_url(&app, &mailto).map_err(|e| e.to_string())
 }
 
+/// Opens an external `https://` or `mailto:` URL in the OS default browser or
+/// mail client via `ShellExecuteW` (fixes WebView2 blocked target="_blank"
+/// redirects for provider app-password pages, API key dashboards, and docs).
+#[tauri::command]
+pub async fn open_external_url(app: AppHandle, url: String) -> CmdResult<()> {
+    let trimmed = url.trim();
+    let lower = trimmed.to_lowercase();
+    if !lower.starts_with("https://") && !lower.starts_with("mailto:") {
+        return Err("only https:// and mailto: URLs are accepted".into());
+    }
+    crate::platform::shell::open_url(&app, trimmed).map_err(|e| e.to_string())
+}
+
+fn percent_encode_query(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Spawns a standalone floating composer window initialized with the current
+/// draft state so users can write or reply in a separate window while browsing
+/// other threads in the main window.
+#[tauri::command]
+pub async fn open_composer_window(app: AppHandle, state_json: String) -> CmdResult<()> {
+    let label = format!(
+        "composer-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(1)
+    );
+    let encoded = percent_encode_query(&state_json);
+    let url = format!("index.html?window=composer&state={encoded}");
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(url.into()))
+        .title("Compose — cracktivity")
+        .inner_size(740.0, 620.0)
+        .min_inner_size(520.0, 440.0)
+        .resizable(true)
+        .center()
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------- settings
 
 /// The whole settings surface for the UI (Phase 5): every key the app owns.
@@ -1273,12 +1334,16 @@ pub async fn set_setting(
 }
 
 /// Keys the UI may write (allowlist: no secrets ever live in `settings`).
-const SETTINGS_KEYS: [&str; 15] = [
+const SETTINGS_KEYS: [&str; 19] = [
     "ai.enabled",
     "ai.tier_override",
     "ai.engine",
     "ai.byo_model",
     "ai.model_override",
+    "ai.providers_config",
+    "ai.writing_engine",
+    "ai.writing_model",
+    "ai.fallback_engine",
     "mcp.allow_send",
     "mcp.rate_limit_per_hour",
     "search.also_server",
@@ -1337,25 +1402,90 @@ pub enum AiEvent {
 }
 
 /// Settings snapshot for AI commands.
-struct AiSettings {
-    enabled: bool,
-    engine: crate::ai::EngineKind,
-    model: Option<String>,
-    tier_override: Option<String>,
+pub(crate) struct AiSettings {
+    pub(crate) enabled: bool,
+    pub(crate) engine_id: String,
+    pub(crate) model: Option<String>,
+    pub(crate) writing_engine_id: Option<String>,
+    pub(crate) writing_model: Option<String>,
+    pub(crate) fallback_engine_id: String,
+    pub(crate) tier_override: Option<String>,
+    pub(crate) providers_config: serde_json::Value,
+}
+
+fn default_provider_base_url(id: &str) -> &'static str {
+    match id {
+        "openai" => "https://api.openai.com",
+        "anthropic" => "https://api.anthropic.com",
+        "xai" => "https://api.x.ai",
+        "openrouter" => "https://openrouter.ai/api/v1",
+        "mistral" => "https://api.mistral.ai/v1",
+        "groq" => "https://api.groq.com/openai/v1",
+        "gemini" => "https://generativelanguage.googleapis.com/v1beta/openai",
+        "huggingface" => "https://router.huggingface.co/v1",
+        _ => "",
+    }
+}
+
+fn default_provider_model(id: &str) -> &'static str {
+    match id {
+        "local" => "local",
+        "openai" => "gpt-4o-mini",
+        "anthropic" => "claude-3-5-haiku-latest",
+        "xai" => "grok-2-latest",
+        "openrouter" => "openai/gpt-4o-mini",
+        "mistral" => "mistral-small-latest",
+        "groq" => "llama-3.3-70b-versatile",
+        "gemini" => "gemini-2.5-flash",
+        "huggingface" => "Qwen/Qwen2.5-72B-Instruct",
+        "chatgpt" => "gpt-4.1-mini",
+        _ => "gpt-4o-mini",
+    }
+}
+
+pub(crate) fn ai_settings_from_conn(conn: &rusqlite::Connection) -> AiSettings {
+    let get = |key: &str| dao::get_setting(conn, key).ok().flatten();
+    AiSettings {
+        enabled: get("ai.enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+        engine_id: get("ai.engine")
+            .and_then(|v| v.as_str().map(String::from))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "local".to_string()),
+        model: get("ai.byo_model")
+            .and_then(|v| v.as_str().map(String::from))
+            .filter(|s| !s.trim().is_empty()),
+        writing_engine_id: get("ai.writing_engine")
+            .and_then(|v| v.as_str().map(String::from))
+            .filter(|s| !s.trim().is_empty() && s != "same"),
+        writing_model: get("ai.writing_model")
+            .and_then(|v| v.as_str().map(String::from))
+            .filter(|s| !s.trim().is_empty()),
+        fallback_engine_id: get("ai.fallback_engine")
+            .and_then(|v| v.as_str().map(String::from))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "local".to_string()),
+        tier_override: get("ai.tier_override").and_then(|v| v.as_str().map(String::from)),
+        providers_config: get("ai.providers_config").unwrap_or_else(|| serde_json::json!({})),
+    }
 }
 
 fn ai_settings_of(state: &State<'_, AppState>) -> AiSettings {
-    AiSettings {
-        enabled: get_setting_value(state, "ai.enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        engine: get_setting_value(state, "ai.engine")
-            .and_then(|v| v.as_str().and_then(crate::ai::EngineKind::parse))
-            .unwrap_or(crate::ai::EngineKind::Local),
-        model: get_setting_value(state, "ai.byo_model").and_then(|v| v.as_str().map(String::from)),
-        tier_override: get_setting_value(state, "ai.tier_override")
-            .and_then(|v| v.as_str().map(String::from)),
-    }
+    state
+        .inner()
+        .store
+        .lock()
+        .ok()
+        .map(|st| ai_settings_from_conn(st.conn()))
+        .unwrap_or(AiSettings {
+            enabled: false,
+            engine_id: "local".into(),
+            model: None,
+            writing_engine_id: None,
+            writing_model: None,
+            fallback_engine_id: "local".into(),
+            tier_override: None,
+            providers_config: serde_json::json!({}),
+        })
 }
 
 /// AI status for Settings + onboarding (FR-20/23/25 surface).
@@ -1365,17 +1495,34 @@ pub async fn ai_status(state: State<'_, AppState>) -> CmdResult<serde_json::Valu
     let mut ai = state.inner().ai.lock().map_err(|_| "ai poisoned")?;
     let tier = ai.effective_tier(s.tier_override.as_deref());
     let hw = crate::ai::models::detect();
-    let key_set = |kind| {
-        crate::platform::providers::get_account_secret(crate::ai::byo_key_target(kind)).is_ok()
+    let key_set_id = |id: &str| {
+        crate::ai::byo_key_target_for_id(id)
+            .map(|t| crate::platform::providers::get_account_secret(&t).is_ok())
+            .unwrap_or(false)
     };
-    let byo_configured = serde_json::json!({
-        "openai": key_set(crate::ai::EngineKind::OpenAi),
-        "anthropic": key_set(crate::ai::EngineKind::Anthropic),
-        "xai": key_set(crate::ai::EngineKind::Xai),
-    });
+    let mut byo_map = serde_json::Map::new();
+    for id in [
+        "openai",
+        "anthropic",
+        "xai",
+        "openrouter",
+        "mistral",
+        "groq",
+        "gemini",
+        "huggingface",
+    ] {
+        byo_map.insert(id.to_string(), serde_json::Value::Bool(key_set_id(id)));
+    }
+    if let Some(obj) = s.providers_config.as_object() {
+        for k in obj.keys() {
+            if !byo_map.contains_key(k) {
+                byo_map.insert(k.clone(), serde_json::Value::Bool(key_set_id(k)));
+            }
+        }
+    }
     Ok(serde_json::json!({
         "enabled": s.enabled,
-        "engine": s.engine.as_str(),
+        "engine": s.engine_id,
         "chatgpt_email": crate::ai::siwc::load_stored().map(|c| c.email),
         "tier": tier.as_str(),
         "tier_reason": format!(
@@ -1389,7 +1536,7 @@ pub async fn ai_status(state: State<'_, AppState>) -> CmdResult<serde_json::Valu
             .as_mut()
             .map(|s| s.is_alive())
             .unwrap_or(false),
-        "byo_configured": byo_configured,
+        "byo_configured": serde_json::Value::Object(byo_map),
         "model_disk_bytes": crate::ai::manager::disk_usage(&ai.model_dir),
     }))
 }
@@ -1459,17 +1606,65 @@ pub async fn ai_set_key(
     kind: String,
     key: Option<String>,
 ) -> CmdResult<()> {
-    let engine = crate::ai::EngineKind::parse(&kind)
-        .filter(|k| *k != crate::ai::EngineKind::Local)
-        .ok_or("unknown engine kind")?;
-    let target = crate::ai::byo_key_target(engine);
+    let target = crate::ai::byo_key_target_for_id(&kind).ok_or("unknown engine kind")?;
     match key {
         Some(k) if !k.trim().is_empty() => {
-            crate::platform::providers::set_account_secret(target, k.trim())
+            crate::platform::providers::set_account_secret(&target, k.trim())
         }
-        _ => crate::platform::providers::delete_account_secret(target),
+        _ => crate::platform::providers::delete_account_secret(&target),
     }
     .map_err(|e| e.to_string())
+}
+
+/// Validates an AI provider endpoint URL:
+/// - Requires `https://` with a non-empty host, OR
+/// - Allows `http://` ONLY when the parsed host is strictly a loopback address
+///   (`localhost`, `127.0.0.1`, `::1`, or `[::1]`). Rejects prefix tricks like
+///   `http://localhost.attacker.example`.
+pub(crate) fn validate_ai_endpoint_url(raw: &str) -> Result<(Url, bool), String> {
+    let parsed = Url::parse(raw.trim()).map_err(|e| format!("invalid endpoint URL: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "endpoint URL must include a host".to_string())?;
+    let is_loopback = matches!(
+        host.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "[::1]"
+    );
+    match parsed.scheme() {
+        "https" => Ok((parsed, false)),
+        "http" if is_loopback => Ok((parsed, true)),
+        "http" => Err(
+            "Base URL must use https:// (or http://localhost / http://127.0.0.1 for local endpoints)"
+                .into(),
+        ),
+        other => Err(format!("unsupported URL scheme '{other}': use https://")),
+    }
+}
+
+/// Queries a provider's `/models` endpoint to test connectivity and return
+/// discovered model IDs (Jan-style Refresh Models & Test Connection).
+#[tauri::command]
+pub async fn ai_fetch_models(
+    kind: String,
+    base_url: String,
+    api_key: Option<String>,
+    api_format: Option<String>,
+) -> CmdResult<Vec<String>> {
+    let trimmed_url = base_url.trim().to_string();
+    validate_ai_endpoint_url(&trimmed_url)?;
+    let resolved_key = match api_key.filter(|k| !k.trim().is_empty()) {
+        Some(k) => k,
+        None => crate::ai::byo_key_target_for_id(&kind)
+            .and_then(|t| crate::platform::providers::get_account_secret(&t).ok())
+            .unwrap_or_default(),
+    };
+    let is_anthropic = api_format.as_deref() == Some("anthropic") || kind == "anthropic";
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ai::chat::fetch_provider_models(&trimmed_url, &resolved_key, is_anthropic)
+            .map_err(|e| e.0)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Runs the Sign in with ChatGPT browser flow (D-047): dynamic client
@@ -1514,11 +1709,113 @@ fn thread_transcript(store: &Store, thrid: &str) -> Result<String, String> {
     Ok(out)
 }
 
+pub(crate) fn build_byo_provider_engine(
+    settings: &AiSettings,
+    engine_id: &str,
+    override_model: Option<&str>,
+) -> Result<Box<dyn crate::ai::ChatEngine>, String> {
+    let provider_cfg = &settings.providers_config[engine_id];
+    if provider_cfg["enabled"].as_bool() == Some(false) {
+        return Err(format!(
+            "provider '{engine_id}' is disabled in Settings → AI"
+        ));
+    }
+    let configured_base = provider_cfg["baseUrl"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default_provider_base_url(engine_id));
+    if configured_base.is_empty() {
+        return Err(format!(
+            "No base URL configured for provider '{engine_id}' (Settings → AI)"
+        ));
+    }
+    let (_parsed_url, is_local_http) = validate_ai_endpoint_url(configured_base)?;
+    let target = crate::ai::byo_key_target_for_id(engine_id).ok_or("unknown engine kind")?;
+    let key = match crate::platform::providers::get_account_secret(&target) {
+        Ok(k) => k,
+        Err(_) if is_local_http => String::new(),
+        Err(_) => return Err(format!("no {engine_id} API key configured (Settings → AI)")),
+    };
+    let configured_default_model = provider_cfg["defaultModel"]
+        .as_str()
+        .or_else(|| {
+            provider_cfg["models"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str().or_else(|| v["id"].as_str()))
+        })
+        .unwrap_or_else(|| default_provider_model(engine_id));
+    let model = override_model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or(configured_default_model);
+    let api_format = provider_cfg["apiFormat"]
+        .as_str()
+        .unwrap_or(if engine_id == "anthropic" {
+            "anthropic"
+        } else {
+            "openai"
+        });
+    if api_format == "anthropic" {
+        if configured_base == "https://api.anthropic.com" {
+            Ok(Box::new(crate::ai::chat::Anthropic::new(&key, model)))
+        } else {
+            Ok(Box::new(crate::ai::chat::Anthropic::with_base_url(
+                configured_base,
+                &key,
+                model,
+            )))
+        }
+    } else if engine_id == "openai" && configured_base == "https://api.openai.com" {
+        Ok(Box::new(crate::ai::chat::OpenAiCompat::openai(&key, model)))
+    } else if engine_id == "xai" && configured_base == "https://api.x.ai" {
+        Ok(Box::new(crate::ai::chat::OpenAiCompat::xai(&key, model)))
+    } else {
+        Ok(Box::new(crate::ai::chat::OpenAiCompat::custom(
+            configured_base,
+            &key,
+            model,
+        )))
+    }
+}
+
+fn build_provider_engine(
+    ai: &Arc<Mutex<crate::ai::AiState>>,
+    settings: &AiSettings,
+    engine_id: &str,
+    override_model: Option<&str>,
+) -> Result<Box<dyn crate::ai::ChatEngine>, String> {
+    if engine_id == "local" {
+        let mut ai = ai.lock().map_err(|_| "ai poisoned")?;
+        let tier = ai.effective_tier(settings.tier_override.as_deref());
+        let engine = ai.local_engine(tier).map_err(|e| e.to_string())?;
+        return Ok(Box::new(engine));
+    }
+    if engine_id == "chatgpt" {
+        let stored =
+            crate::ai::siwc::load_stored().ok_or("not signed in to ChatGPT (Settings, AI)")?;
+        let access = if crate::ai::siwc::needs_refresh(&stored) {
+            crate::ai::siwc::refresh(&stored).map_err(|e| e.to_string())?;
+            crate::ai::siwc::load_stored()
+                .ok_or("ChatGPT connection vanished")?
+                .access
+        } else {
+            stored.access
+        };
+        let model = override_model
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or(default_provider_model("chatgpt"));
+        return Ok(Box::new(crate::ai::chat::Responses::new(access, model)));
+    }
+    build_byo_provider_engine(settings, engine_id, override_model)
+}
+
 /// Runs the streaming task with the FR-24 fallback chain: chosen engine →
-/// local model with a visible notice. Never silently switches to cloud.
+/// configured fallback engine (default: local model) with a visible notice.
 fn run_ai_task(
     ai: &Arc<Mutex<crate::ai::AiState>>,
     settings: &AiSettings,
+    is_writing_task: bool,
     passes: &[Vec<crate::ai::Msg>],
     reduce: bool,
     on_event: &tauri::ipc::Channel<AiEvent>,
@@ -1546,8 +1843,6 @@ fn run_ai_task(
             );
         }
         if reduce && parts.len() > 1 {
-            // Map-reduce (spec §6.4): part summaries combine into the final
-            // summary, which streams its own deltas.
             engine
                 .stream_chat(
                     &crate::ai::prompts::summarize_reduce_messages(&parts),
@@ -1563,80 +1858,49 @@ fn run_ai_task(
         }
     }
 
-    // Resolve the engine under the AI lock, then stream without it.
-    let local_engine = |ai: &Mutex<crate::ai::AiState>| -> Result<
-        (Box<dyn crate::ai::ChatEngine>, String),
-        String,
-    > {
-        let mut ai = ai.lock().map_err(|_| "ai poisoned")?;
-        let tier = ai.effective_tier(settings.tier_override.as_deref());
-        let engine = ai.local_engine(tier).map_err(|e| e.to_string())?;
-        Ok((Box::new(engine), tier.as_str().to_string()))
+    let chosen_engine_id = if is_writing_task {
+        settings
+            .writing_engine_id
+            .as_deref()
+            .unwrap_or(&settings.engine_id)
+    } else {
+        &settings.engine_id
+    };
+    let chosen_model = if is_writing_task {
+        settings
+            .writing_model
+            .as_deref()
+            .or(settings.model.as_deref())
+    } else {
+        settings.model.as_deref()
     };
 
-    match settings.engine {
-        crate::ai::EngineKind::Local => {
-            let (engine, _tier) = local_engine(ai)?;
-            run_passes(engine.as_ref(), passes, reduce, on_event)
-        }
-        byo_kind => {
-            let key =
-                crate::platform::providers::get_account_secret(crate::ai::byo_key_target(byo_kind))
-                    .map_err(|_| {
-                        format!(
-                            "no {} API key configured (Settings → AI)",
-                            byo_kind.as_str()
-                        )
-                    })?;
-            let model = settings
-                .model
-                .clone()
-                .unwrap_or_else(|| byo_kind.default_model().to_string());
-            let engine: Box<dyn crate::ai::ChatEngine> = match byo_kind {
-                crate::ai::EngineKind::Anthropic => {
-                    Box::new(crate::ai::chat::Anthropic::new(&key, &model))
-                }
-                crate::ai::EngineKind::OpenAi => {
-                    Box::new(crate::ai::chat::OpenAiCompat::openai(&key, &model))
-                }
-                crate::ai::EngineKind::Xai => {
-                    Box::new(crate::ai::chat::OpenAiCompat::xai(&key, &model))
-                }
-                crate::ai::EngineKind::ChatGpt => {
-                    // Plan-backed inference: OAuth access token from Sign in
-                    // with ChatGPT against the Responses API path (D-047).
-                    // The engine keeps the OpenAI-compatible wire shape; the
-                    // token endpoint difference lives in siwc.rs.
-                    let stored = crate::ai::siwc::load_stored()
-                        .ok_or("not signed in to ChatGPT (Settings, AI)")?;
-                    let access = if crate::ai::siwc::needs_refresh(&stored) {
-                        crate::ai::siwc::refresh(&stored).map_err(|e| e.to_string())?;
-                        crate::ai::siwc::load_stored()
-                            .ok_or("ChatGPT connection vanished")?
-                            .access
-                    } else {
-                        stored.access
-                    };
-                    Box::new(crate::ai::chat::Responses::new(access, &model))
-                }
-                crate::ai::EngineKind::Local => unreachable!("matched above"),
-            };
-            match run_passes(engine.as_ref(), passes, reduce, on_event) {
-                Ok(text) => Ok(text),
-                Err(byo_err) => {
-                    // FR-24: fall back to the local model with a visible notice.
-                    let (local, _tier) = local_engine(ai).map_err(|local_err| {
-                        format!("{byo_err}; local fallback unavailable: {local_err}")
-                    })?;
-                    let _ = on_event.send(AiEvent::Notice {
-                        text: format!(
-                            "{} API unreachable — used the local model instead",
-                            byo_kind.as_str()
-                        ),
-                    });
-                    run_passes(local.as_ref(), passes, reduce, on_event)
-                }
+    if chosen_engine_id == "local" {
+        let engine = build_provider_engine(ai, settings, "local", None)?;
+        return run_passes(engine.as_ref(), passes, reduce, on_event);
+    }
+
+    let primary_res = build_provider_engine(ai, settings, chosen_engine_id, chosen_model)
+        .and_then(|engine| run_passes(engine.as_ref(), passes, reduce, on_event));
+
+    match primary_res {
+        Ok(text) => Ok(text),
+        Err(byo_err) => {
+            let fb_id = settings.fallback_engine_id.as_str();
+            if fb_id == "none" || fb_id == chosen_engine_id {
+                return Err(byo_err);
             }
+            let fb_engine = build_provider_engine(ai, settings, fb_id, None)
+                .map_err(|fb_err| format!("{byo_err}; fallback ({fb_id}) unavailable: {fb_err}"))?;
+            let fb_label = if fb_id == "local" {
+                "the local model".to_string()
+            } else {
+                format!("fallback provider '{fb_id}'")
+            };
+            let _ = on_event.send(AiEvent::Notice {
+                text: format!("{chosen_engine_id} API unreachable — used {fb_label} instead"),
+            });
+            run_passes(fb_engine.as_ref(), passes, reduce, on_event)
         }
     }
 }
@@ -1657,7 +1921,7 @@ pub async fn ai_summarize(
     let ai = Arc::clone(state.inner().ai_ref());
     let passes = crate::ai::prompts::summarize_messages(&transcript);
     tauri::async_runtime::spawn_blocking(move || {
-        run_ai_task(&ai, &settings, &passes, true, &on_event)?;
+        run_ai_task(&ai, &settings, false, &passes, true, &on_event)?;
         let _ = on_event.send(AiEvent::Done);
         Ok::<(), String>(())
     })
@@ -1694,7 +1958,7 @@ pub async fn ai_draft_reply(
     let ai = Arc::clone(state.inner().ai_ref());
     let msgs = crate::ai::prompts::draft_messages(&transcript, &instruction, &account_email);
     tauri::async_runtime::spawn_blocking(move || {
-        run_ai_task(&ai, &settings, &[msgs], false, &on_event)?;
+        run_ai_task(&ai, &settings, true, &[msgs], false, &on_event)?;
         let _ = on_event.send(AiEvent::Done);
         Ok::<(), String>(())
     })
@@ -2051,6 +2315,18 @@ pub fn seed_demo(store: &Store) -> i64 {
     account
 }
 
+/// Removes any synthetic `--e2e-seed` demo account (`credential_ref = 'cracktivity.e2e.seed'`)
+/// and its cascaded folders/messages/threads so normal production runs never show
+/// stock demo data even if `--e2e-seed` was previously run against the profile.
+pub fn purge_demo(store: &Store) -> Result<usize, crate::store::StoreError> {
+    let conn = store.conn();
+    let deleted = conn.execute(
+        "DELETE FROM accounts WHERE credential_ref = 'cracktivity.e2e.seed'",
+        [],
+    )?;
+    Ok(deleted)
+}
+
 // ------------------------------------------------------------------ tests
 
 #[cfg(test)]
@@ -2222,5 +2498,94 @@ mod tests {
         );
         let unread = invoke("unread_total", serde_json::json!({}));
         assert_eq!(unread.as_i64(), Some(3), "local mirror applied at once");
+    }
+
+    #[test]
+    fn purge_demo_removes_seeded_account_and_messages() {
+        let (_dir, state) = seeded_state();
+        let st = state.store.lock().unwrap();
+        assert_eq!(queries::list_accounts(st.conn()).unwrap().len(), 1);
+        let deleted = purge_demo(&st).expect("purge_demo must succeed");
+        assert_eq!(deleted, 1);
+        assert!(
+            queries::list_accounts(st.conn()).unwrap().is_empty(),
+            "demo account and cascaded messages must be removed on normal startup"
+        );
+        let all =
+            queries::thread_list(st.conn(), Scope::Unified, ImportanceFilter::All, 50, 0).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn validate_ai_endpoint_url_rejects_localhost_prefix_spoofing() {
+        assert!(validate_ai_endpoint_url("http://localhost.attacker.example/v1").is_err());
+        assert!(validate_ai_endpoint_url("http://127.0.0.1.attacker.example/v1").is_err());
+        assert!(validate_ai_endpoint_url("http://remote.example.com/v1").is_err());
+        assert!(
+            validate_ai_endpoint_url("http://localhost:11434/v1")
+                .unwrap()
+                .1
+        );
+        assert!(
+            validate_ai_endpoint_url("http://127.0.0.1:1234/v1")
+                .unwrap()
+                .1
+        );
+        assert!(
+            !validate_ai_endpoint_url("https://api.openai.com/v1")
+                .unwrap()
+                .1
+        );
+    }
+
+    #[test]
+    fn generic_account_maps_to_imap_schema_and_resolves_custom_endpoints() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        use tauri::webview::InvokeRequest;
+        use tauri::Manager;
+
+        let (_dir, state) = seeded_state();
+        let app = mock_builder()
+            .invoke_handler(tauri::generate_handler![super::add_account])
+            .build(mock_context(noop_assets()))
+            .expect("mock app");
+        app.manage(state);
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+
+        let res = tauri::test::get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "add_account".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "providerId": "generic",
+                    "email": "iqbalmaarif@invosa.com",
+                    "password": "test-app-password",
+                    "imapHost": "imap.invosa.com",
+                    "imapPort": 993,
+                    "smtpHost": "smtp.invosa.com",
+                    "smtpPort": 587
+                })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .expect("add_account generic must succeed against SQLCipher CHECK constraint")
+        .deserialize::<serde_json::Value>()
+        .unwrap();
+
+        let acc_id = res["id"].as_i64().unwrap();
+        assert_eq!(res["provider"].as_str(), Some("imap"));
+        assert_eq!(res["email"].as_str(), Some("iqbalmaarif@invosa.com"));
+
+        let app_state = app.state::<AppState>();
+        let st = app_state.store.lock().unwrap();
+        let smtp_ep = crate::mail::smtp::smtp_endpoint_of(st.conn(), acc_id).unwrap();
+        assert_eq!(smtp_ep, ("smtp.invosa.com".to_string(), 587));
+        let _ = providers::delete_account_secret(&providers::app_password_target(acc_id));
     }
 }

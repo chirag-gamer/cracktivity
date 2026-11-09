@@ -139,7 +139,11 @@ export interface AiStatus {
   tier_is_override: boolean;
   model_downloaded: boolean;
   sidecar_running: boolean;
-  byo_configured: { openai: boolean; anthropic: boolean; xai: boolean };
+  byo_configured: Record<string, boolean> & {
+    openai: boolean;
+    anthropic: boolean;
+    xai: boolean;
+  };
   chatgpt_email?: string | null;
   model_disk_bytes: number;
 }

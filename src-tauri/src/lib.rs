@@ -55,9 +55,14 @@ pub fn run() {
             let (state, driver) =
                 app::AppState::new(dir.parent().ok_or("app data dir has no parent")?)?;
             state.set_ai_resource_dir(&app.handle().path().resource_dir()?);
-            if e2e_seed {
+            {
                 let st = state.store_ref().lock().map_err(|_| "store poisoned")?;
-                app::seed_demo(&st);
+                if e2e_seed {
+                    app::seed_demo(&st);
+                } else {
+                    app::purge_demo(&st)
+                        .map_err(|e| format!("failed to purge demo account: {e}"))?;
+                }
             }
 
             // Preferences read before `state` moves into app state.
@@ -92,6 +97,7 @@ pub fn run() {
                     _ => main.theme().unwrap_or(tauri::Theme::Light),
                 };
                 let _ = main.set_background_color(Some(theme_bg(mode)));
+                let _ = main.maximize();
                 let _ = main.show();
                 let _ = main.unminimize();
                 let _ = main.set_focus();
@@ -139,6 +145,8 @@ pub fn run() {
             app::delete_draft,
             app::send_draft,
             app::open_mailto,
+            app::open_external_url,
+            app::open_composer_window,
             app::get_settings,
             app::set_setting,
             app::ai_status,
@@ -146,6 +154,7 @@ pub fn run() {
             app::ai_download_model,
             app::ai_delete_model,
             app::ai_set_key,
+            app::ai_fetch_models,
             app::ai_chatgpt_connect,
             app::ai_chatgpt_disconnect,
             app::ai_summarize,

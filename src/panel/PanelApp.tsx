@@ -4,11 +4,12 @@
  * content: newest unread across accounts, j/k + quick actions, Esc hides.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Text } from "@fluentui/react-components";
-import { ExternalLink, Mail } from "lucide-react";
+import { Text } from "@fluentui/react-components";
+import { CheckCircle2, ExternalLink, Inbox } from "lucide-react";
 import { ipc } from "../shared/ipc";
 import { S } from "../shared/strings";
-import { relativeTime, senderName, addressHue } from "../shared/format";
+import { Avatar, BadgePill } from "../shared/ui";
+import { relativeTime, senderName } from "../shared/format";
 import type { MessageRow } from "../shared/types";
 import { useKeyboard } from "../main/keyboard";
 import {
@@ -132,33 +133,34 @@ export function PanelApp() {
     <div className="panel-shell" data-testid="panel-app">
       <header className="panel-header">
         <div className="panel-header-title">
-          <Mail fill="currentColor" style={{ color: "var(--accent)" }} />
+          <span className="panel-brand-dot">
+            <Inbox size={14} />
+          </span>
           <span>{S.panelTitle}</span>
         </div>
         <button
-          className="link-button"
+          type="button"
+          className="link-button panel-open-btn"
           onClick={() => void openMain()}
           data-testid="panel-open-main"
-          style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
         >
           <span>{S.openInApp}</span>
-          <ExternalLink />
+          <ExternalLink size={12} />
         </button>
       </header>
 
       {queue.length === 0 ? (
         <div className="empty panel-empty" role="status">
-          {S.panelEmpty}
+          <CheckCircle2 size={20} style={{ color: "var(--status-success)" }} />
+          <span>{S.panelEmpty}</span>
         </div>
       ) : (
-        <div role="listbox" aria-label={S.panelTitle}>
+        <div role="listbox" aria-label={S.panelTitle} className="panel-list">
           {queue.map((m, i) => {
             const sender = senderName(m.from[0] ?? null);
-            const initial = (sender || "U")[0].toUpperCase();
-            const hue = addressHue(m.from[0]?.email ?? sender);
-
             return (
               <button
+                type="button"
                 key={m.id}
                 role="option"
                 aria-selected={i === idx}
@@ -167,18 +169,19 @@ export function PanelApp() {
                 onMouseEnter={() => setIdx(i)}
                 onClick={() => setIdx(i)}
               >
-                <div className="row-main">
-                  <span
-                    className="row-avatar"
-                    style={{ background: `hsl(${hue} 65% 42%)` }}
-                  >
-                    {initial}
-                  </span>
-                  <span className="row-sender strong">{sender}</span>
-                  <span className="row-time">{relativeTime(m.date)}</span>
+                <Avatar
+                  name={sender}
+                  seed={m.from[0]?.email ?? sender}
+                  size="sm"
+                />
+                <div className="row-body-col">
+                  <div className="row-main">
+                    <span className="row-sender strong">{sender}</span>
+                    <span className="row-time">{relativeTime(m.date)}</span>
+                  </div>
+                  <div className="row-subject">{m.subject}</div>
+                  <div className="row-snippet">{m.snippet}</div>
                 </div>
-                <div className="row-subject">{m.subject}</div>
-                <div className="row-snippet">{m.snippet}</div>
               </button>
             );
           })}
@@ -187,7 +190,11 @@ export function PanelApp() {
 
       <footer className="panel-footer">
         <Text size={100}>{S.panelHints}</Text>
-        {queue.length > 0 && <Badge appearance="filled">{queue.length}</Badge>}
+        {queue.length > 0 && (
+          <BadgePill variant="brand" size="xs">
+            {queue.length}
+          </BadgePill>
+        )}
       </footer>
     </div>
   );

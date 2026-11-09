@@ -2,10 +2,11 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for both app windows: custom commands need no entries (allowed by default); core:default covers events + read-only window getters (least power, spec §10). The panel also hides itself via the Rust hide_panel command, not JS window APIs.",
-  "windows": ["main", "panel"],
+  "windows": ["main", "panel", "composer-*"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
-    "core:window:allow-set-focus"
+    "core:window:allow-set-focus",
+    "core:window:allow-close"
   ]
 }

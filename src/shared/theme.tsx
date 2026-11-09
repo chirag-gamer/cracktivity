@@ -13,6 +13,7 @@ import {
   type BrandVariants,
   type Theme,
 } from "@fluentui/react-components";
+import { LucideProvider } from "lucide-react";
 import { readLocalPref, writePref, syncDbPref } from "./prefs";
 
 export type ThemeMode = "light" | "dark";
@@ -22,69 +23,84 @@ const THEME_LOCAL_KEY = "cracktivity.theme";
 const THEME_DB_KEY = "appearance.theme";
 
 /**
- * cracktivity brand ramp (FR-28): the accent the whole UI keys off. Hue
- * matches the video reference sampling (test/ui-redesign-notes.md §6).
+ * cracktivity brand ramp (FR-28, D-049): WCAG AA-calibrated blue accent scale.
+ * Shade 50 (#2563eb) achieves 5.17:1 contrast with #ffffff; shade 40 (#1d4ed8)
+ * achieves 6.70:1 contrast with #ffffff for light-mode primary fills.
  */
 const BRAND: BrandVariants = {
-  10: "#061630",
-  20: "#0a2652",
-  30: "#0d3a7e",
-  40: "#0f4da8",
-  50: "#145cd6",
-  60: "#2b7ff7",
-  70: "#4d8df6",
-  80: "#6da4f8",
-  90: "#96c0fa",
-  100: "#bcd7fb",
-  110: "#d9e8fd",
-  120: "#e8f1fe",
-  130: "#f2f7fe",
+  10: "#061226",
+  20: "#0b2144",
+  30: "#123469",
+  40: "#1d4ed8",
+  50: "#2563eb",
+  60: "#3b82f6",
+  70: "#60a5fa",
+  80: "#7bb6fc",
+  90: "#9ec9fd",
+  100: "#bfdafe",
+  110: "#d8e9fe",
+  120: "#e8f2ff",
+  130: "#f2f7ff",
   140: "#f8fbff",
   150: "#fbfdff",
-  160: "#fdfeff",
+  160: "#ffffff",
 };
 
-/** Dark surfaces sampled from the reference video (test/ui-redesign-notes.md):
- * nearer layers are lighter, nothing is pure black, the selected row is a
- * quiet #181818 rather than a blue wash. */
+/**
+ * Dark surfaces calibrated for distinct elevation separation and WCAG AA
+ * contrast (≥4.5:1 for all text tokens, ≥3:1 for interactive borders/focus).
+ */
 const cracktivityDark: Theme = (() => {
   const base = createDarkTheme(BRAND);
   return {
     ...base,
-    colorNeutralBackground1: "#050505",
-    colorNeutralBackground1Hover: "#121212",
-    colorNeutralBackground1Selected: "#181818",
-    colorNeutralBackground2: "#0a0a0a",
-    colorNeutralBackground2Hover: "#161616",
-    colorNeutralBackground2Selected: "#1b1b1b",
-    colorNeutralBackground3: "#141414",
-    colorNeutralBackground4: "#181818",
-    colorNeutralBackground5: "#1b1b1b",
-    colorNeutralBackground6: "#202020",
-    colorNeutralForeground1: "#ececec",
-    colorNeutralForeground2: "#a8a8a8",
-    colorNeutralForeground3: "#6b6b6b",
-    colorNeutralStroke1: "#1c1c1c",
-    colorNeutralStroke2: "#242424",
-    colorNeutralStrokeAccessible: "#a8a8a8",
-    colorBrandBackground: "#2b7ff7",
-    colorBrandBackgroundHover: "#4d9df8",
-    colorBrandBackgroundPressed: "#1f66d0",
-    colorBrandForeground1: "#5b9df8",
-    colorBrandForeground2: "#7ab0fa",
+    colorNeutralBackground1: "#090a0d",
+    colorNeutralBackground1Hover: "#151820",
+    colorNeutralBackground1Selected: "#1c202a",
+    colorNeutralBackground2: "#0d0f14",
+    colorNeutralBackground2Hover: "#181b24",
+    colorNeutralBackground2Selected: "#1f2430",
+    colorNeutralBackground3: "#14171f",
+    colorNeutralBackground4: "#1a1e28",
+    colorNeutralBackground5: "#202531",
+    colorNeutralBackground6: "#262c3a",
+    colorNeutralForeground1: "#f3f4f6",
+    colorNeutralForeground2: "#b8beca",
+    colorNeutralForeground3: "#8b93a2",
+    colorNeutralStroke1: "#1f232d",
+    colorNeutralStroke2: "#2a2f3d",
+    colorNeutralStrokeAccessible: "#9ca3af",
+    colorBrandBackground: "#2563eb",
+    colorBrandBackgroundHover: "#1d4ed8",
+    colorBrandBackgroundPressed: "#1e40af",
+    colorBrandForeground1: "#60a5fa",
+    colorBrandForeground2: "#93c5fd",
   };
 })();
 
-/** Light theme keeps the same accent on near-white surfaces. */
+/** Light theme with distinct surface elevation and WCAG AA muted foregrounds. */
 const cracktivityLight: Theme = (() => {
   const base = createLightTheme(BRAND);
   return {
     ...base,
     colorNeutralBackground1: "#ffffff",
-    colorNeutralBackground2: "#f5f5f7",
-    colorNeutralBackground3: "#f2f2f4",
-    colorBrandBackground: "#0a6cd6",
-    colorBrandForeground1: "#0a6cd6",
+    colorNeutralBackground1Hover: "#f3f5f9",
+    colorNeutralBackground1Selected: "#e9eef8",
+    colorNeutralBackground2: "#f5f6f9",
+    colorNeutralBackground2Hover: "#ebedf3",
+    colorNeutralBackground2Selected: "#e2e6f0",
+    colorNeutralBackground3: "#eef0f5",
+    colorNeutralForeground1: "#111827",
+    colorNeutralForeground2: "#374151",
+    colorNeutralForeground3: "#5b6472",
+    colorNeutralStroke1: "#e2e6ee",
+    colorNeutralStroke2: "#cfd5e2",
+    colorNeutralStrokeAccessible: "#4b5563",
+    colorBrandBackground: "#1d4ed8",
+    colorBrandBackgroundHover: "#1e40af",
+    colorBrandBackgroundPressed: "#1e3a8a",
+    colorBrandForeground1: "#1d4ed8",
+    colorBrandForeground2: "#1e40af",
   };
 })();
 
@@ -185,7 +201,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           into every portal surface (Tooltip/Dialog, fluentui #29184). so
           the height lives on this wrapper, not on the provider. */}
       <div className="provider-root">
-        <FluentProvider theme={themeFor(mode)}>{children}</FluentProvider>
+        <FluentProvider theme={themeFor(mode)}>
+          <LucideProvider size={15} strokeWidth={1.75}>
+            {children}
+          </LucideProvider>
+        </FluentProvider>
       </div>
     </ChoiceContext.Provider>
   );

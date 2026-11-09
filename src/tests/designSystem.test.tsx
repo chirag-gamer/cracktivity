@@ -1,0 +1,565 @@
+/**
+ * L1: Design System primitives, LucideProvider icon sizing/stroke invariants,
+ * 5-state button behavior, 3-step onboarding wizard navigation, and first-run
+ * / quick-reply action handlers (Phase 8 / D-049).
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { Mail } from "lucide-react";
+import { ThemeProvider } from "../shared/theme";
+import {
+  Avatar,
+  BadgePill,
+  EmptyStateCard,
+  IconButton,
+  Kbd,
+  StatusDot,
+  ToastBanner,
+  UiButton,
+  UiSelect,
+  extractInitials,
+  hashAvatarSlot,
+} from "../shared/ui";
+import { AccountPane } from "../main/AccountPane";
+import { MessageList } from "../main/MessageList";
+import { Reader } from "../main/Reader";
+import { OnboardingDialog } from "../main/Onboarding";
+import { AddAccountDialog } from "../main/AddAccountDialog";
+import { SettingsView } from "../main/SettingsView";
+import { Composer } from "../main/Composer";
+import { message, thread } from "./fixtures";
+
+beforeEach(() => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "get_settings":
+        return {};
+      case "set_setting":
+      case "ai_set_enabled":
+      case "ai_download_model":
+        return null;
+      case "message_body":
+        return {
+          text: "body text",
+          html: null,
+          blocked_images: 0,
+          tracking_count: 0,
+          snippet: "body text",
+        };
+      default:
+        return null;
+    }
+  });
+});
+
+afterEach(() => {
+  clearMocks();
+  cleanup();
+});
+
+describe("Design System Primitives (src/shared/ui.tsx)", () => {
+  it("extracts initials and deterministic WCAG-compliant avatar slots", () => {
+    expect(extractInitials("Ada Lovelace <ada@analytical.org>")).toBe("AL");
+    expect(extractInitials("grace.hopper@navy.mil")).toBe("GH");
+    expect(extractInitials("single")).toBe("SI");
+    const slotA = hashAvatarSlot("ada@analytical.org");
+    const slotB = hashAvatarSlot("ADA@analytical.org");
+    expect(slotA).toEqual(slotB);
+    expect(slotA.fg).toBe("#ffffff");
+  });
+
+  it("UiButton handles click, disabled, loading, and kbd shortcut states", () => {
+    const onClick = vi.fn();
+    const { getByRole, rerender } = render(
+      <UiButton variant="primary" size="md" pill kbd="C" onClick={onClick}>
+        Compose
+      </UiButton>,
+    );
+    const btn = getByRole("button");
+    expect(btn.className).toContain("ui-btn--primary");
+    expect(btn.className).toContain("ui-btn--pill");
+    expect(btn.querySelector("kbd")?.textContent).toBe("C");
+
+    fireEvent.click(btn);
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <UiButton variant="primary" disabled onClick={onClick}>
+        Compose
+      </UiButton>,
+    );
+    expect((getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(getByRole("button"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <UiButton variant="primary" loading onClick={onClick}>
+        Compose
+      </UiButton>,
+    );
+    expect(getByRole("button").getAttribute("aria-busy")).toBe("true");
+    expect((getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("renders IconButton, BadgePill, StatusDot, Kbd, EmptyStateCard, and ToastBanner", () => {
+    const onAction = vi.fn();
+    const onDismiss = vi.fn();
+    const { getByLabelText, getByTestId } = render(
+      <div>
+        <IconButton label="Sync inbox" badge={3}>
+          <Mail />
+        </IconButton>
+        <BadgePill variant="ai">AI Ready</BadgePill>
+        <StatusDot state="connected" showLabel />
+        <Kbd>Ctrl+K</Kbd>
+        <EmptyStateCard
+          testId="empty-card"
+          eyebrow="GETTING STARTED"
+          title="Welcome"
+          description="Connect an account"
+        />
+        <ToastBanner
+          testId="toast"
+          message="Archived 1 thread"
+          actionLabel="Undo"
+          onAction={onAction}
+          onDismiss={onDismiss}
+        />
+        <Avatar name="Jane Doe" status="connected" ring />
+      </div>,
+    );
+
+    expect(getByLabelText("Sync inbox").textContent).toContain("3");
+    expect(getByTestId("empty-card").textContent).toContain("Welcome");
+    const toast = getByTestId("toast");
+    fireEvent.click(toast.querySelector("button")!);
+    expect(onAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Icon System & Stroke Consistency (ThemeProvider + LucideProvider)", () => {
+  it("applies default size=15 and strokeWidth=1.75 via LucideProvider and never fills Mail", () => {
+    const { container } = render(
+      <ThemeProvider>
+        <AccountPane
+          accounts={[]}
+          statuses={[]}
+          scope={{ kind: "unified" }}
+          onScope={() => {}}
+        />
+      </ThemeProvider>,
+    );
+    const svgs = Array.from(container.querySelectorAll("svg"));
+    expect(svgs.length).toBeGreaterThan(0);
+    for (const svg of svgs) {
+      expect(svg.getAttribute("width")).toBe("15");
+      expect(svg.getAttribute("height")).toBe("15");
+      expect(svg.getAttribute("stroke-width")).toBe("1.75");
+      // Outline icons in AccountPane must never have fill="currentColor"
+      expect(svg.getAttribute("fill")).not.toBe("currentColor");
+    }
+  });
+});
+
+describe("Onboarding Wizard & First-Run Experience", () => {
+  it("walks through AI -> Appearance (Dark/Light/System) -> Account steps with Back navigation", async () => {
+    const onFinish = vi.fn();
+    const onAddAccount = vi.fn();
+    let downloadCalls = 0;
+    mockIPC((cmd) => {
+      if (cmd === "ai_download_model") {
+        downloadCalls += 1;
+      }
+      return null;
+    });
+
+    const { getByTestId, getByText } = render(
+      <ThemeProvider>
+        <OnboardingDialog
+          open
+          onFinish={onFinish}
+          onAddAccount={onAddAccount}
+        />
+      </ThemeProvider>,
+    );
+
+    // Step 1 -> Step 2
+    fireEvent.click(getByTestId("onboarding-accept"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-theme-dark")).toBeInTheDocument(),
+    );
+    expect(downloadCalls).toBe(1);
+    expect(getByTestId("onboarding-theme-light")).toBeInTheDocument();
+    expect(getByTestId("onboarding-theme-system")).toBeInTheDocument();
+
+    // Exercise Back from Step 2 -> Step 1, and ensure accepting again does not re-download
+    fireEvent.click(getByText("Back"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-accept")).toBeInTheDocument(),
+    );
+    fireEvent.click(getByTestId("onboarding-accept"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-theme-dark")).toBeInTheDocument(),
+    );
+    expect(downloadCalls).toBe(1);
+
+    fireEvent.click(getByTestId("onboarding-theme-dark"));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    // Step 2 -> Step 3
+    fireEvent.click(getByText("Continue"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-add-account")).toBeInTheDocument(),
+    );
+
+    // Exercise Back from Step 3 -> Step 2 -> Step 3
+    fireEvent.click(getByText("Back"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-theme-dark")).toBeInTheDocument(),
+    );
+    fireEvent.click(getByText("Continue"));
+    await waitFor(() =>
+      expect(getByTestId("onboarding-add-account")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(getByTestId("onboarding-add-account"));
+    expect(onAddAccount).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByTestId("onboarding-finish"));
+    expect(onFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it("AddAccountDialog quick provider pills, external password page link, and manual SMTP port/host validation work", async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+    mockIPC((cmd, args) => {
+      calls.push([cmd, args as Record<string, unknown>]);
+      if (cmd === "add_account") {
+        return { id: 9, email: "user@custom.org", display_name: null, unread: 0 };
+      }
+      return null;
+    });
+
+    const { getByText, getByTestId, queryByTestId } = render(
+      <ThemeProvider>
+        <AddAccountDialog open onClose={() => {}} onAdded={() => {}} />
+      </ThemeProvider>,
+    );
+
+    // Clicking Provider password page invokes open_external_url via ShellExecuteW
+    fireEvent.click(getByTestId("provider-password-link"));
+    await waitFor(() =>
+      expect(calls.some(([c]) => c === "open_external_url")).toBe(true),
+    );
+    expect(calls.find(([c]) => c === "open_external_url")?.[1]).toMatchObject({
+      url: "https://myaccount.google.com/apppasswords",
+    });
+
+    expect(queryByTestId("account-host")).not.toBeInTheDocument();
+    expect(queryByTestId("account-smtp-host")).not.toBeInTheDocument();
+    fireEvent.click(getByText("Other (IMAP)"));
+    expect(queryByTestId("account-host")).toBeInTheDocument();
+    expect(queryByTestId("account-smtp-host")).toBeInTheDocument();
+    expect(queryByTestId("account-smtp-port")).toBeInTheDocument();
+
+    // Non-imap.* host with blank SMTP field must pass empty smtpHost (Cubic #4)
+    // and selected SMTP port 465 (Cubic #5)
+    fireEvent.change(getByTestId("account-email"), {
+      target: { value: "user@custom.org" },
+    });
+    fireEvent.change(getByTestId("account-password"), {
+      target: { value: "secret1234" },
+    });
+    fireEvent.change(getByTestId("account-host"), {
+      target: { value: "mail.custom.org" },
+    });
+    fireEvent.change(getByTestId("account-smtp-port"), {
+      target: { value: "465" },
+    });
+    fireEvent.click(getByTestId("add-account-submit"));
+
+    await waitFor(() =>
+      expect(calls.some(([c]) => c === "add_account")).toBe(true),
+    );
+    const addCall = calls.find(([c]) => c === "add_account")?.[1];
+    expect(addCall).toMatchObject({
+      providerId: "generic",
+      imapHost: "mail.custom.org",
+      smtpHost: "",
+      smtpPort: 465,
+    });
+  });
+
+  it("MessageList first-run empty state triggers onAddAccount, unread indicator is accessible, and row hover actions work", () => {
+    const onAddAccount = vi.fn();
+    const onArchiveThread = vi.fn();
+    const onToggleStarThread = vi.fn();
+
+    const { getByText, rerender, getAllByLabelText, queryByLabelText } = render(
+      <MessageList
+        threads={[]}
+        selectedThrid={null}
+        onSelect={() => {}}
+        loading={false}
+        hasAccounts={false}
+        onAddAccount={onAddAccount}
+      />,
+    );
+
+    fireEvent.click(getByText("Add account"));
+    expect(onAddAccount).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <MessageList
+        threads={[thread(1, { unread_count: 1 })]}
+        selectedThrid="t1"
+        onSelect={() => {}}
+        loading={false}
+        hasAccounts
+        onArchiveThread={onArchiveThread}
+        onToggleStarThread={onToggleStarThread}
+      />,
+    );
+
+    // Unread thread exposes role="img" aria-label="Unread" (Cubic #6)
+    expect(queryByLabelText("Unread")).toBeInTheDocument();
+
+    fireEvent.click(getAllByLabelText("Archive thread")[0]!);
+    expect(onArchiveThread).toHaveBeenCalledWith("t1");
+    fireEvent.click(getAllByLabelText("Star thread")[0]!);
+    expect(onToggleStarThread).toHaveBeenCalledWith("t1", true);
+  });
+
+  it("SettingsView Jan-inspired AI providers, provider modal, and custom provider dialog work", async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+    // Stateful settings store so get_settings reflects set_setting writes,
+    // like the real persisted settings table does.
+    const settingsStore: Record<string, unknown> = {
+      "ai.engine": "anthropic",
+      "ai.byo_model": "claude-sonnet-4-5",
+    };
+    mockIPC((cmd, args) => {
+      calls.push([cmd, args as Record<string, unknown>]);
+      switch (cmd) {
+        case "ai_status":
+          return {
+            enabled: true,
+            engine: "local",
+            tier: "mid",
+            tier_reason: "16 GB RAM, 8 cores → mid tier",
+            tier_is_override: false,
+            model_downloaded: true,
+            sidecar_running: false,
+            byo_configured: { openai: false, anthropic: true, xai: false },
+            model_disk_bytes: 397_000_000,
+          };
+        case "get_settings":
+          return settingsStore;
+        case "set_setting":
+          settingsStore[(args as { key: string }).key] = (
+            args as { value: unknown }
+          ).value;
+          return null;
+        case "mcp_audit_tail":
+          return [];
+        case "diagnostics_hosts":
+          return [];
+        case "storage_usage":
+          return { db_bytes: 1024, models_bytes: 2048 };
+        case "diagnostics_logs":
+          return [];
+        default:
+          return null;
+      }
+    });
+
+    const { findByTestId, getByTestId } = render(
+      <ThemeProvider>
+        <SettingsView />
+      </ThemeProvider>,
+    );
+
+    expect(await findByTestId("local-ai-card")).toBeInTheDocument();
+    expect(await findByTestId("external-apis-card")).toBeInTheDocument();
+
+    // Open Anthropic provider settings modal via gear icon
+    fireEvent.click(await findByTestId("provider-settings-btn-anthropic"));
+    expect(await findByTestId("provider-detail-modal")).toBeInTheDocument();
+    expect(
+      (getByTestId("provider-baseurl-input") as HTMLInputElement).value,
+    ).toBe("https://api.anthropic.com");
+    expect(getByTestId("provider-model-claude-sonnet-4-5")).toBeInTheDocument();
+
+    // Close the provider settings modal before clicking Add Provider trigger
+    fireEvent.click(getByTestId("provider-modal-close"));
+
+    // Open Add Custom Provider dialog and create a custom endpoint
+    fireEvent.click(getByTestId("add-provider-trigger"));
+    expect(await findByTestId("add-provider-dialog")).toBeInTheDocument();
+    fireEvent.change(getByTestId("provider-name-input"), {
+      target: { value: "DeepSeek Custom" },
+    });
+    fireEvent.change(getByTestId("provider-base-url-input"), {
+      target: { value: "https://api.deepseek.com/v1" },
+    });
+    fireEvent.change(getByTestId("provider-initial-model-input"), {
+      target: { value: "deepseek-chat" },
+    });
+    fireEvent.click(getByTestId("add-provider-submit"));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          ([c, a]) => c === "set_setting" && a?.key === "ai.providers_config",
+        ),
+      ).toBe(true),
+    );
+
+    // Deleting the active custom provider reconciles ai.engine back to local
+    fireEvent.click(await findByTestId("delete-custom-provider-btn"));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          ([c, a]) =>
+            c === "set_setting" &&
+            a?.key === "ai.engine" &&
+            a?.value === "local",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("UiSelect associates label htmlFor with the trigger button and restores focus on Escape", () => {
+    const onChange = vi.fn();
+    const { getByLabelText, getByRole } = render(
+      <div>
+        <label htmlFor="theme-select-test">Appearance Theme</label>
+        <UiSelect
+          id="theme-select-test"
+          value="dark"
+          onChange={onChange}
+          options={[
+            { value: "dark", label: "Dark" },
+            { value: "light", label: "Light" },
+          ]}
+        />
+      </div>,
+    );
+
+    const trigger = getByLabelText("Appearance Theme") as HTMLButtonElement;
+    expect(trigger.tagName).toBe("BUTTON");
+
+    fireEvent.click(trigger);
+    const listbox = getByRole("listbox");
+    expect(listbox).toBeInTheDocument();
+
+    const lightOpt = getByRole("option", { name: "Light" });
+    lightOpt.focus();
+    fireEvent.keyDown(listbox, { key: "Escape" });
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("UiSelect portals the listbox into the enclosing dialog surface, not document.body", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(
+      <div className="fui-DialogSurface">
+        <UiSelect
+          value="587"
+          ariaLabel="SMTP port & TLS mode"
+          onChange={onChange}
+          options={[
+            { value: "587", label: "587 (STARTTLS)" },
+            { value: "465", label: "465 (Implicit TLS)" },
+          ]}
+        />
+      </div>,
+    );
+
+    fireEvent.click(getByRole("combobox", { name: "SMTP port & TLS mode" }));
+    const listbox = getByRole("listbox");
+    const surface = document.querySelector(".fui-DialogSurface");
+    expect(surface).not.toBeNull();
+    // The options must stay inside the dialog's focus/ARIA boundary.
+    expect(surface).toContainElement(listbox);
+    expect(listbox.parentElement).not.toBe(document.body);
+
+    fireEvent.click(getByRole("option", { name: "465 (Implicit TLS)" }));
+    expect(onChange).toHaveBeenCalledWith("465");
+  });
+
+  it("Composer pop-out button opens a standalone composer window", async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+    mockIPC((cmd, args) => {
+      calls.push([cmd, args as Record<string, unknown>]);
+      return null;
+    });
+
+    const onClose = vi.fn();
+    const { getByTestId } = render(
+      <Composer
+        target={{
+          accountId: 1,
+          to: [{ email: "alice@example.com" }],
+          subject: "Popout draft",
+          initialBody: "Hello from popout",
+        }}
+        onClose={onClose}
+        onSent={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByTestId("composer-popout"));
+    await waitFor(() =>
+      expect(calls.some(([c]) => c === "open_composer_window")).toBe(true),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Reader empty state and thread quick-reply / toolbar buttons invoke callbacks directly", () => {
+    const onCompose = vi.fn();
+    const onReply = vi.fn();
+    const onArchiveThread = vi.fn();
+    const onToggleStarThread = vi.fn();
+    const onDraftReply = vi.fn();
+
+    const { getByText, getByTitle, rerender } = render(
+      <Reader
+        messages={[]}
+        onMarkRead={() => {}}
+        aiEnabled
+        threadId={null}
+        onDraftReply={onDraftReply}
+        onCompose={onCompose}
+      />,
+    );
+
+    fireEvent.click(getByText("Compose"));
+    expect(onCompose).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <Reader
+        messages={[message(1)]}
+        onMarkRead={() => {}}
+        aiEnabled
+        threadId="t1"
+        onDraftReply={onDraftReply}
+        onReply={onReply}
+        onArchiveThread={onArchiveThread}
+        onToggleStarThread={onToggleStarThread}
+      />,
+    );
+
+    fireEvent.click(getByTitle("Archive thread (e)"));
+    expect(onArchiveThread).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByTitle("Star thread (s)"));
+    expect(onToggleStarThread).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByText("Reply"));
+    expect(onReply).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByText("Sounds good, thanks!"));
+    expect(onDraftReply).toHaveBeenCalledWith("t1", "Sounds good, thanks!");
+  });
+});
